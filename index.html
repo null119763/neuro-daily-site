@@ -110,6 +110,10 @@
     <h2>TikTok connection (for the channel owner)</h2>
     <p>After you sign in on TikTok and press <b>Authorize</b>, TikTok returns you to this page. The address bar of your browser then
        contains <code>?code=…&amp;state=…</code>.</p>
+    <div id="cb" style="display:none;margin:14px 0">
+      <button id="cbtn" style="font-size:18px;padding:12px 22px;border:0;border-radius:12px;background:var(--red);color:#fff;cursor:pointer">Copy address / Скопировать адрес</button>
+      <span id="cok" class="muted"></span>
+    </div>
     <ol>
       <li>Copy the <b>whole address</b> from your browser's address bar.</li>
       <li>Paste it into the NEURO DAILY panel → <b>TikTok</b> → field 2, and press <b>Save</b>.</li>
@@ -128,6 +132,14 @@
     document.querySelectorAll("nav a").forEach(a => a.classList.toggle("on", a.getAttribute("href") === "#" + id));
   }
   addEventListener("hashchange", show); show();
+  if (new URLSearchParams(location.search).has("code")) {
+    document.getElementById("cb").style.display = "block";
+    document.getElementById("cbtn").onclick = async () => {
+      try { await navigator.clipboard.writeText(location.href); }
+      catch (e) { const t = document.createElement("textarea"); t.value = location.href; document.body.appendChild(t); t.select(); document.execCommand("copy"); t.remove(); }
+      document.getElementById("cok").textContent = " ✓ Copied / Скопировано — вставьте в панель (Ctrl+V)";
+    };
+  }
 </script>
 </body>
 </html>
