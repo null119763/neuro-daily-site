@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NEURO DAILY — app info, Privacy Policy, Terms of Service</title>
+<style>
+  :root { --ink:#1b1a19; --muted:#6f6a64; --red:#e0402b; --paper:#f6f3ee; --card:#fff; --line:#e7e2da; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.6 -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: var(--ink); background: var(--paper); }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 64px; }
+  header { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+  .logo { width: 48px; height: 48px; border-radius: 50%; background: var(--red); color: #fff; font-weight: 800; display: grid; place-items: center; }
+  h1 { font-size: 28px; margin: 0; letter-spacing: -.3px; } h1 b { color: var(--red); }
+  nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 26px; }
+  nav a { text-decoration: none; color: var(--ink); background: var(--card); border: 1px solid var(--line); padding: 7px 14px; border-radius: 20px; font-size: 14px; }
+  nav a.on { border-color: var(--red); color: var(--red); }
+  section { display: none; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 26px 28px; }
+  section.on { display: block; }
+  h2 { margin-top: 0; font-size: 22px; } h3 { font-size: 17px; margin: 22px 0 6px; }
+  .muted { color: var(--muted); font-size: 14px; }
+  .ru { margin-top: 26px; padding-top: 18px; border-top: 1px dashed var(--line); }
+  code { background: #f1eee9; padding: 1px 6px; border-radius: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><div class="logo">ND</div><h1>NEURO <b>DAILY</b></h1></header>
+  <p class="muted">Short, fact-checked explainer videos about AI and technology news, in Russian.</p>
+  <nav>
+    <a href="#about">About the app</a>
+    <a href="#privacy">Privacy Policy</a>
+    <a href="#terms">Terms of Service</a>
+    <a href="#tiktok-connect">TikTok connection</a>
+  </nav>
+
+  <section id="about">
+    <h2>About the NEURO DAILY app</h2>
+    <p>NEURO DAILY is a private production tool used by a single creator to run the NEURO DAILY channel. It turns published
+       news about artificial intelligence, science and technology into short vertical explainer videos in Russian.</p>
+    <h3>How it works</h3>
+    <ol>
+      <li>The tool reads public news feeds from official sources (for example company blogs, NASA, MIT News, Nature).</li>
+      <li>It drafts a script based only on the source text, checks every factual statement against a verbatim quote from the source,
+          generates a voice-over and an animated video.</li>
+      <li><b>The creator reviews every video and approves or rejects it manually.</b> Nothing is posted automatically without that approval.</li>
+      <li>Only an approved video is uploaded to the creator's <b>own</b> TikTok account through the official TikTok Content Posting API,
+          with the "AI-generated content" label enabled.</li>
+    </ol>
+    <h3>Who uses it</h3>
+    <p>Only the channel owner. The app does not offer accounts, sign-up or any service to other TikTok users.</p>
+    <div class="ru"><b>По-русски:</b> NEURO DAILY — личный инструмент автора канала. Он делает короткие объясняющие ролики о новостях
+      ИИ и технологий по официальным источникам, проверяет факты, а публикует в собственный TikTok автора только те ролики,
+      которые автор вручную одобрил. Другим пользователям сервис не предоставляется.</div>
+  </section>
+
+  <section id="privacy">
+    <h2>Privacy Policy</h2>
+    <p class="muted">Effective date: November 6, 2026</p>
+    <h3>1. Whose data</h3>
+    <p>NEURO DAILY is used only by its owner. It does not collect personal data from viewers or from other TikTok users.</p>
+    <h3>2. What we access on TikTok</h3>
+    <ul>
+      <li><b>Basic profile information</b> (<code>user.info.basic</code>): the account's open ID and display name — only to show which account is connected.</li>
+      <li><b>Video upload and publishing</b> (<code>video.upload</code>, <code>video.publish</code>): to upload videos the owner has approved to the owner's own account.</li>
+    </ul>
+    <p>We do not access followers, direct messages, comments, contacts, location or payment information.</p>
+    <h3>3. How it is stored</h3>
+    <p>OAuth access and refresh tokens issued by TikTok are stored in the owner's private database running on the owner's own computer.
+       They are never shared, sold or transferred to third parties, and are not written to logs. The owner's TikTok password is never seen
+       or stored by the app — sign-in happens only on TikTok's own website.</p>
+    <h3>4. Retention and deletion</h3>
+    <p>Tokens are kept only while the connection is active. Access can be revoked at any time in TikTok:
+       <i>Settings and privacy → Security → Apps and services permissions</i>; the stored tokens are then deleted from the database.</p>
+    <h3>5. Third parties</h3>
+    <p>To produce videos the app uses: Anthropic (script drafting from public news text), Yandex SpeechKit (voice synthesis from the script text).
+       No TikTok user data is sent to these services.</p>
+    <h3>6. Children</h3>
+    <p>The app is not directed to children and does not process children's data.</p>
+    <h3>7. Contact</h3>
+    <p>Questions about this policy: send a direct message to the NEURO DAILY TikTok account.</p>
+    <div class="ru"><b>По-русски:</b> приложение использует только владелец канала. Доступ к TikTok — базовый профиль (чтобы показать,
+      какой аккаунт подключён) и загрузка одобренных видео в его собственный аккаунт. Пароль не видим и не храним; токены лежат
+      в частной базе владельца, никому не передаются. Отозвать доступ можно в настройках TikTok.</div>
+  </section>
+
+  <section id="terms">
+    <h2>Terms of Service</h2>
+    <p class="muted">Effective date: November 6, 2026</p>
+    <h3>1. The service</h3>
+    <p>NEURO DAILY is a personal content-production tool operated by the owner of the NEURO DAILY channel for their own use.
+       No service is offered to the public and no user accounts are created.</p>
+    <h3>2. Content rules</h3>
+    <ul>
+      <li>Videos are based on publicly available news from official sources; every factual statement is checked against the source text, and the source is credited in the description.</li>
+      <li>Every video is reviewed and approved by the owner before publishing; AI-generated content is labelled as such on TikTok.</li>
+      <li>Music is used only with a licence that allows it (for example CC BY with attribution, or original tracks).</li>
+      <li>Content must comply with the TikTok Community Guidelines and Terms of Service.</li>
+    </ul>
+    <h3>3. TikTok integration</h3>
+    <p>The app uses the official TikTok Content Posting API only to publish the owner's approved videos to the owner's account.
+       The owner can disconnect the app at any time in TikTok settings.</p>
+    <h3>4. No warranty</h3>
+    <p>The tool is provided as is, for the owner's personal use.</p>
+    <div class="ru"><b>По-русски:</b> это личный инструмент автора канала; публикуются только одобренные автором ролики по официальным
+      источникам с проверкой фактов и пометкой «создано ИИ», музыка — только с лицензией.</div>
+  </section>
+
+  <section id="tiktok-connect">
+    <h2>TikTok connection (for the channel owner)</h2>
+    <p>After you sign in on TikTok and press <b>Authorize</b>, TikTok returns you to this page. The address bar of your browser then
+       contains <code>?code=…&amp;state=…</code>.</p>
+    <ol>
+      <li>Copy the <b>whole address</b> from your browser's address bar.</li>
+      <li>Paste it into the NEURO DAILY panel → <b>TikTok</b> → field 2, and press <b>Save</b>.</li>
+    </ol>
+    <p class="muted">The code works once and expires in a few minutes. Never share it with anyone else.</p>
+    <div class="ru"><b>По-русски:</b> после входа в TikTok скопируйте весь адрес из строки браузера и вставьте в панель NEURO DAILY →
+      TikTok → поле 2 → «Сохранить».</div>
+  </section>
+</div>
+<script>
+  const views = ["about", "privacy", "terms", "tiktok-connect"];
+  function show() {
+    const fromTikTok = new URLSearchParams(location.search).has("code");
+    const id = views.includes(location.hash.slice(1)) ? location.hash.slice(1) : (fromTikTok ? "tiktok-connect" : "about");
+    for (const v of views) document.getElementById(v).classList.toggle("on", v === id);
+    document.querySelectorAll("nav a").forEach(a => a.classList.toggle("on", a.getAttribute("href") === "#" + id));
+  }
+  addEventListener("hashchange", show); show();
+</script>
+</body>
+</html>
