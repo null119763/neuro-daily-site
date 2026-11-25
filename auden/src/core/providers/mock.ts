@@ -66,11 +66,14 @@ export class MockProvider implements ModelProvider {
 function buildReply(userText: string, system: string): string {
   const ru = /[а-яё]/i.test(userText) || (!/[a-z]/i.test(userText) && /locale: ru/.test(system));
   const topic = userText.replace(/\s+/g, " ").trim().slice(0, 120);
+  const docs = [...system.matchAll(/<document name="([^"]*)">/g)].map((m) => m[1]);
+  const docLine = docs.length ? (ru ? `Документы в контексте: ${docs.join(", ")}.` : `Documents in context: ${docs.join(", ")}.`) : null;
   if (ru) {
     return [
       `Это демонстрационный ответ **mock‑провайдера** — настоящая модель не подключена.`,
       ``,
       `Ваш запрос: «${topic}».`,
+      ...(docLine ? [``, docLine] : []),
       ``,
       `Когда будет настроен ключ OpenRouter, здесь появится ответ реальной модели. Пока можно проверить:`,
       ``,
@@ -83,6 +86,7 @@ function buildReply(userText: string, system: string): string {
     `This is a demo reply from the **mock provider** — no real model is connected.`,
     ``,
     `Your request: "${topic}".`,
+    ...(docLine ? [``, docLine] : []),
     ``,
     `Once an OpenRouter key is configured, a real model will answer here. Meanwhile you can test:`,
     ``,

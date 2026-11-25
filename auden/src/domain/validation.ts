@@ -71,11 +71,14 @@ export function chatRequestSchema(maxInputChars: number) {
       mode: z.enum(MODES).optional(),
       /** Replace the last assistant answer with a new one for the same user message. */
       regenerate: z.boolean().optional(),
+      /** Uploaded attachments to send with this message (see POST /api/attachments). */
+      attachmentIds: z.array(uuid).max(3).optional(),
     })
     .superRefine((v, ctx) => {
       if (v.regenerate) {
         if (!v.conversationId) ctx.addIssue({ code: "custom", path: ["conversationId"], message: "conversationId is required to regenerate" });
         if (v.message !== undefined) ctx.addIssue({ code: "custom", path: ["message"], message: "message must be omitted when regenerating" });
+        if (v.attachmentIds?.length) ctx.addIssue({ code: "custom", path: ["attachmentIds"], message: "attachments cannot be added when regenerating" });
       } else if (v.message === undefined) {
         ctx.addIssue({ code: "custom", path: ["message"], message: "message is required" });
       }

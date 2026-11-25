@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Conversation, Memory, Message, Profile, Project, UsageEvent } from "@/domain/types";
+import type { AttachmentWithContent, Conversation, Memory, Message, Profile, Project, UsageEvent } from "@/domain/types";
 
 export interface LocalUser {
   id: string;
@@ -25,6 +25,7 @@ export interface LocalData {
   conversations: Conversation[];
   messages: Message[];
   memories: Memory[];
+  attachments: AttachmentWithContent[];
   usage: UsageEvent[];
 }
 
@@ -37,6 +38,7 @@ const empty = (): LocalData => ({
   conversations: [],
   messages: [],
   memories: [],
+  attachments: [],
   usage: [],
 });
 

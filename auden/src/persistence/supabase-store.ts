@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Conversation, Memory, Message, Profile, Project, UsageEvent, UserExport } from "@/domain/types";
+import type { Attachment, AttachmentWithContent, Conversation, Memory, Message, Profile, Project, UsageEvent, UserExport } from "@/domain/types";
 import type {
+  AttachmentInput,
   ConversationFilter,
   ConversationInput,
   ConversationPatch,
@@ -73,6 +74,20 @@ const toMemory = (r: Row): Memory => ({
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
+const ATTACHMENT_META = "id,user_id,conversation_id,message_id,name,mime,size,chars,truncated,created_at";
+const toAttachment = (r: Row): Attachment => ({
+  id: r.id,
+  userId: r.user_id,
+  conversationId: r.conversation_id,
+  messageId: r.message_id,
+  name: r.name,
+  mime: r.mime,
+  size: r.size,
+  chars: r.chars,
+  truncated: r.truncated,
+  createdAt: r.created_at,
+});
+const toAttachmentWithContent = (r: Row): AttachmentWithContent => ({ ...toAttachment(r), content: r.content });
 const toUsage = (r: Row): UsageEvent => ({
   id: r.id,
   userId: r.user_id,
@@ -263,6 +278,54 @@ export class SupabaseUserStore implements UserStore {
     return (r as Row[]).length;
   }
 
+  async createAttachment(i: AttachmentInput): Promise<Attachment> {
+    const row = { user_id: this.userId, name: i.name, mime: i.mime, size: i.size, content: i.content, chars: i.content.length, truncated: i.truncated };
+    return toAttachment(one(await this.sb.from("attachments").insert(row).select(ATTACHMENT_META).single()));
+  }
+
+  async getAttachments(ids: string[]): Promise<Attachment[]> {
+    if (!ids.length) return [];
+    return (check(await this.sb.from("attachments").select(ATTACHMENT_META).eq("user_id", this.userId).in("id", ids)) as Row[]).map(toAttachment);
+  }
+
+  async listConversationAttachments(conversationId: string): Promise<AttachmentWithContent[]> {
+    const rows = check(
+      await this.sb.from("attachments").select("*").eq("user_id", this.userId).eq("conversation_id", conversationId).not("message_id", "is", null).order("created_at"),
+    ) as Row[];
+    return rows.map(toAttachmentWithContent);
+  }
+
+  async linkAttachments(ids: string[], conversationId: string, messageId: string): Promise<number> {
+    if (!ids.length) return 0;
+    const res = await this.sb
+      .from("attachments")
+      .update({ conversation_id: conversationId, message_id: messageId })
+      .eq("user_id", this.userId)
+      .is("message_id", null)
+      .in("id", ids)
+      .select("id");
+    if (res.error?.code === "42501") return 0;
+    return (check(res) as Row[]).length;
+  }
+
+  async deleteAttachment(id: string): Promise<boolean> {
+    const r = check(await this.sb.from("attachments").delete().eq("id", id).eq("user_id", this.userId).is("message_id", null).select("id"));
+    return (r as Row[]).length > 0;
+  }
+
+  async deleteStaleUploads(before: Date): Promise<number> {
+    const r = check(
+      await this.sb.from("attachments").delete().eq("user_id", this.userId).is("message_id", null).lt("created_at", before.toISOString()).select("id"),
+    );
+    return (r as Row[]).length;
+  }
+
+  async countAttachments(since: Date): Promise<number> {
+    const res = await this.sb.from("attachments").select("id", { count: "exact", head: true }).eq("user_id", this.userId).gte("created_at", since.toISOString());
+    if (res.error) throw new Error(`Database error: ${res.error.message}`);
+    return res.count ?? 0;
+  }
+
   async recordUsage(i: UsageInput): Promise<void> {
     check(
       await this.sb.from("usage_events").insert({
@@ -290,15 +353,17 @@ export class SupabaseUserStore implements UserStore {
   }
 
   async exportAll(): Promise<UserExport> {
-    const [profile, projects, conversations, memories, usage] = await Promise.all([
+    const attachmentsQuery = this.sb.from("attachments").select("*").eq("user_id", this.userId).order("created_at");
+    const [profile, projects, conversations, memories, usage, attachmentRows] = await Promise.all([
       this.getProfile(),
       this.listProjects({ includeArchived: true }),
       this.listConversations({ limit: 10_000 }),
       this.listMemories(),
       this.listUsage(new Date(0)),
+      attachmentsQuery.then((r) => check(r) as Row[]),
     ]);
     const withMessages = await Promise.all(conversations.map(async (c) => ({ ...c, messages: await this.listMessages(c.id) })));
-    return { exportedAt: now(), profile, projects, conversations: withMessages, memories, usage };
+    return { exportedAt: now(), profile, projects, conversations: withMessages, memories, attachments: attachmentRows.map(toAttachmentWithContent), usage };
   }
 
   async deleteAccount(): Promise<void> {

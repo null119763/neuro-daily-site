@@ -117,6 +117,41 @@ do $$ begin
   assert (select count(*) from public.profiles) = 0, 'unauthenticated sees nothing';
 end $$;
 reset role;
+-- Attachments: owner-only, cannot be linked to someone else's message
+insert into auth.users (id, email) values
+  ('33333333-3333-3333-3333-333333333333', 'c@test.dev'),
+  ('44444444-4444-4444-4444-444444444444', 'd@test.dev');
+select pg_temp.as_user('33333333-3333-3333-3333-333333333333');
+insert into public.conversations (id, user_id, title) values ('cccccccc-0000-0000-0000-000000000001', auth.uid(), 'C chat');
+insert into public.messages (id, conversation_id, user_id, role, content) values ('cccccccc-0000-0000-0000-000000000002', 'cccccccc-0000-0000-0000-000000000001', auth.uid(), 'user', 'see file');
+insert into public.attachments (id, user_id, conversation_id, message_id, name, mime, size, content, chars)
+  values ('cccccccc-0000-0000-0000-000000000003', auth.uid(), 'cccccccc-0000-0000-0000-000000000001', 'cccccccc-0000-0000-0000-000000000002', 'c.txt', 'text/plain', 10, 'secret doc', 10);
+reset role;
+select pg_temp.as_user('44444444-4444-4444-4444-444444444444');
+do $$ begin
+  assert (select count(*) from public.attachments) = 0, 'd cannot see c attachments';
+  insert into public.attachments (id, user_id, name, mime, size, content) values ('dddddddd-0000-0000-0000-000000000001', auth.uid(), 'd.txt', 'text/plain', 5, 'hello');
+  begin
+    update public.attachments set conversation_id = 'cccccccc-0000-0000-0000-000000000001', message_id = 'cccccccc-0000-0000-0000-000000000002'
+      where id = 'dddddddd-0000-0000-0000-000000000001';
+    raise exception 'linking to a foreign message should fail';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    insert into public.attachments (user_id, name, mime, size, content) values (auth.uid(), 'x.exe', 'application/x-msdownload', 5, 'x');
+    raise exception 'disallowed mime should fail';
+  exception when check_violation then null;
+  end;
+end $$;
+reset role;
+-- Deleting the conversation removes its attachments
+select pg_temp.as_user('33333333-3333-3333-3333-333333333333');
+delete from public.conversations where id = 'cccccccc-0000-0000-0000-000000000001';
+do $$ begin
+  assert (select count(*) from public.attachments) = 0, 'attachments cascade with conversation';
+end $$;
+reset role;
+
 -- Sign-up modes are enforced by the database
 update public.app_config set value = 'allowlist' where key = 'signup_mode';
 insert into public.signup_allowlist (entry) values ('invited@test.dev'), ('@team.dev');

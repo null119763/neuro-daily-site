@@ -3,13 +3,13 @@ import type { AudenEngine } from "@/core/engine";
 import { detectMemoryProposal } from "@/core/memory";
 import { checkQuota } from "@/core/quota";
 import type { Mode } from "@/core/types";
-import type { Conversation, Memory, Message } from "@/domain/types";
+import type { Attachment, Conversation, Memory, Message } from "@/domain/types";
 import { chatRequestSchema, deriveTitle } from "@/domain/validation";
 import type { Session } from "./backend";
 import type { AppConfig } from "./config";
 
 export type ChatStreamEvent =
-  | { type: "start"; conversation: Conversation; userMessage: Message; memoryProposal: Memory | null }
+  | { type: "start"; conversation: Conversation; userMessage: Message; memoryProposal: Memory | null; attachments: Attachment[] }
   | { type: "route"; provider: string; model: string }
   | { type: "delta"; text: string }
   | { type: "done"; message: Message }
@@ -28,7 +28,7 @@ const HISTORY_LIMIT = 40;
 export async function prepareChat(session: Session, engine: AudenEngine, cfg: AppConfig, body: unknown): Promise<ChatPrecheck> {
   const parsed = chatRequestSchema(cfg.maxInputChars).safeParse(body);
   if (!parsed.success) {
-    const tooLong = parsed.error.issues.some((i) => i.code === "too_big");
+    const tooLong = parsed.error.issues.some((i) => i.code === "too_big" && i.path[0] === "message");
     return { ok: false, status: tooLong ? 413 : 400, code: tooLong ? "input_too_long" : "bad_request", message: "Invalid chat request" };
   }
   const req = parsed.data;
@@ -65,6 +65,14 @@ export async function prepareChat(session: Session, engine: AudenEngine, cfg: Ap
   }
   const userText = regen ? regen.userMessage.content : req.message!;
 
+  // Attachments must be the user's own uploads that were not sent yet.
+  const attachmentIds = [...new Set(req.attachmentIds ?? [])];
+  if (attachmentIds.length) {
+    const found = await store.getAttachments(attachmentIds);
+    if (found.length !== attachmentIds.length) return { ok: false, status: 404, code: "attachment_not_found", message: "Attachment not found" };
+    if (found.some((a) => a.messageId)) return { ok: false, status: 409, code: "attachment_already_sent", message: "Attachment already sent" };
+  }
+
   const run = async function* (signal: AbortSignal): AsyncGenerator<ChatStreamEvent> {
     const mode: Mode = req.mode ?? conversation?.mode ?? profile.defaultMode;
     if (!conversation) {
@@ -86,12 +94,15 @@ export async function prepareChat(session: Session, engine: AudenEngine, cfg: Ap
     } else {
       userMessage = (await store.addMessage(conv.id, { role: "user", content: userText }))!;
     }
+    if (!regen && attachmentIds.length) await store.linkAttachments(attachmentIds, conv.id, userMessage.id);
+    const documents = await store.listConversationAttachments(conv.id);
     let memoryProposal: Memory | null = null;
     const fact = profile.memoryEnabled && !regen ? detectMemoryProposal(userText) : null;
     if (fact) {
       memoryProposal = await store.createMemory({ content: fact, projectId: conv.projectId, source: "chat", sourceConversationId: conv.id, consent: false });
     }
-    yield { type: "start", conversation: conv, userMessage, memoryProposal };
+    const sentWith = documents.filter((d) => d.messageId === userMessage.id).map(({ content, ...meta }) => (void content, meta));
+    yield { type: "start", conversation: conv, userMessage, memoryProposal, attachments: sentWith };
 
     const messages = buildContext({
       locale: profile.locale,
@@ -99,6 +110,7 @@ export async function prepareChat(session: Session, engine: AudenEngine, cfg: Ap
       customInstructions: profile.customInstructions,
       project: project ? { title: project.title, instructions: project.instructions } : null,
       memories,
+      documents: documents.map((d) => ({ name: d.name, content: d.content })),
       history: history.filter((m) => m.status === "complete").map((m) => ({ role: m.role, content: m.content })),
       userMessage: userText,
       maxInputTokens: cfg.maxContextTokens,

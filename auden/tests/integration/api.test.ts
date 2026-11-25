@@ -6,6 +6,7 @@ import { loadConfig } from "@/server/config";
 import { handleApi } from "@/server/api";
 import { createRuntime, type Runtime } from "@/server/runtime";
 import { LocalDatabase } from "@/persistence/local-db";
+import { makePdf } from "../fixtures";
 
 /** Mock provider that records the prompts it receives. */
 class SpyProvider extends MockProvider {
@@ -60,6 +61,15 @@ class Client {
       .filter((b) => b.includes("data: "))
       .map((b) => JSON.parse(b.slice(b.indexOf("data: ") + 6)));
     return { status: res.status, events };
+  }
+
+  async upload(name: string, bytes: Uint8Array | string, type = "application/octet-stream"): Promise<{ status: number; data: any }> {
+    const form = new FormData();
+    form.append("file", new File([typeof bytes === "string" ? new TextEncoder().encode(bytes) : new Uint8Array(bytes)], name, { type }));
+    const h: Record<string, string> = { host: "localhost" };
+    if (this.cookies.size) h.cookie = [...this.cookies].map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("; ");
+    const res = await handleApi(new Request("http://localhost/api/attachments", { method: "POST", headers: h, body: form }), this.rt);
+    return { status: res.status, data: await res.json() };
   }
 
   async signUp(email: string) {
@@ -262,6 +272,61 @@ describe("chat streaming and history", () => {
     expect((await alice.chat({ message: "x".repeat(9000) })).status).toBe(413);
     expect((await alice.chat({ message: "" })).status).toBe(400);
     expect((await alice.json("GET", "conversations/not-a-uuid")).status).toBe(404);
+  });
+});
+
+describe("attachments", () => {
+  it("uploads a PDF, sends it with a message and keeps it in later context", async () => {
+    const up = await alice.upload("plan.pdf", makePdf(["Project codename Aurora", "Deadline March"]));
+    expect(up.status).toBe(201);
+    expect(up.data).toMatchObject({ name: "plan.pdf", mime: "application/pdf", messageId: null });
+    expect(up.data.content).toBeUndefined();
+
+    const r = await alice.chat({ message: "Что в документе?", attachmentIds: [up.data.id] });
+    expect(r.events[0].attachments.map((a: any) => a.name)).toEqual(["plan.pdf"]);
+    const sys = spy.prompts.at(-1)![0]!.content;
+    expect(sys).toContain('<document name="plan.pdf">');
+    expect(sys).toContain("Project codename Aurora");
+    expect(r.events.at(-1).message.content).toContain("plan.pdf");
+
+    const convId = r.events[0].conversation.id;
+    await alice.chat({ conversationId: convId, message: "А дедлайн?" });
+    expect(spy.prompts.at(-1)![0]!.content).toContain("Deadline March");
+
+    const conv = (await alice.json("GET", `conversations/${convId}`)).data;
+    expect(conv.attachments).toHaveLength(1);
+    expect(conv.attachments[0].messageId).toBe(conv.messages[0].id);
+    expect(conv.attachments[0].content).toBeUndefined();
+
+    // A sent attachment cannot be reused or deleted on its own
+    expect((await alice.chat({ message: "again", attachmentIds: [up.data.id] })).status).toBe(409);
+    expect((await alice.json("DELETE", `attachments/${up.data.id}`)).status).toBe(404);
+    // ...but goes away with its conversation
+    await alice.json("DELETE", `conversations/${convId}`);
+    const exp = await (await alice.call("GET", "account/export")).json();
+    expect(exp.attachments).toHaveLength(0);
+  });
+
+  it("isolates attachments between users", async () => {
+    const up = await alice.upload("secret.txt", "alice secret");
+    expect((await bob.chat({ message: "steal", attachmentIds: [up.data.id] })).status).toBe(404);
+    expect((await bob.json("DELETE", `attachments/${up.data.id}`)).status).toBe(404);
+    expect((await alice.json("DELETE", `attachments/${up.data.id}`)).status).toBe(200);
+  });
+
+  it("rejects bad uploads with clear codes", async () => {
+    expect((await alice.upload("pic.png", new Uint8Array([0x89, 0x50, 0x4e, 0x47]))).data.error.code).toBe("unsupported_type");
+    expect((await alice.upload("x.txt", new Uint8Array([1, 0, 2]))).status).toBe(415);
+    expect((await alice.upload("empty.txt", "")).status).toBe(400);
+    expect((await alice.call("POST", "attachments", { file: "x" })).status).toBe(415);
+    const ids = [];
+    for (let i = 0; i < 4; i++) ids.push((await alice.upload(`n${i}.txt`, `note ${i}`)).data.id);
+    expect((await alice.chat({ message: "four files", attachmentIds: ids })).status).toBe(400);
+    expect((await alice.chat({ conversationId: null, regenerate: true, attachmentIds: ids.slice(0, 1) })).status).toBe(400);
+  });
+
+  it("requires a session to upload", async () => {
+    expect((await new Client(rt).upload("a.txt", "x")).status).toBe(401);
   });
 });
 
