@@ -303,14 +303,14 @@ export class SupabaseUserStore implements UserStore {
 
 export class SupabaseGlobalUsage implements GlobalUsage {
   constructor(private readonly sb: SupabaseClient) {}
-  private async get(since: Date): Promise<{ requests: number; cost: number }> {
-    const rows = check(await this.sb.rpc("global_usage_since", { since: since.toISOString() })) as Row[];
+  private async get(since: Date, perUserCap: number): Promise<{ requests: number; cost: number }> {
+    const rows = check(await this.sb.rpc("global_usage_since", { since: since.toISOString(), per_user_cap: perUserCap })) as Row[];
     return { requests: Number(rows?.[0]?.requests ?? 0), cost: Number(rows?.[0]?.cost ?? 0) };
   }
-  async countRequests(since: Date) {
-    return (await this.get(since)).requests;
+  async countRequests(since: Date, perUserCap: number) {
+    return (await this.get(since, perUserCap)).requests;
   }
   async sumCost(since: Date) {
-    return (await this.get(since)).cost;
+    return (await this.get(since, 1_000_000)).cost;
   }
 }

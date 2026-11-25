@@ -67,8 +67,17 @@ do $$ begin
     raise exception 'email change should fail';
   exception when insufficient_privilege then null;
   end;
+  -- Usage with non-zero cost cannot be recorded through the user's JWT
+  begin
+    insert into public.usage_events (user_id, provider, model, cost) values ('22222222-2222-2222-2222-222222222222', 'x', 'y', 5);
+    raise exception 'costed usage insert should fail';
+  exception when insufficient_privilege then null;
+  end;
   -- Global aggregate is visible without exposing per-user rows
-  assert (select requests from public.global_usage_since(now() - interval '1 day')) = 1, 'global usage aggregate';
+  assert (select requests from public.global_usage_since(now() - interval '1 day', 10)) = 1, 'global usage aggregate';
+  -- Flooding: Bob inserts many rows directly; his contribution is capped
+  insert into public.usage_events (user_id, provider, model) select '22222222-2222-2222-2222-222222222222', 'x', 'y' from generate_series(1, 50);
+  assert (select requests from public.global_usage_since(now() - interval '1 day', 10)) = 11, 'per-user cap applied';
 end $$;
 reset role;
 
@@ -99,6 +108,7 @@ do $$ begin
   assert (select count(*) from public.projects) = 0, 'projects removed';
   assert (select count(*) from public.memories) = 0, 'memories removed';
   assert (select count(*) from public.usage_events where user_id is null) = 1, 'usage anonymised, kept for accounting';
+  assert (select cost from public.global_usage_since(now() - interval '1 day', 10)) = 0, 'no cost recorded';
 end $$;
 
 -- Unauthenticated requests see nothing

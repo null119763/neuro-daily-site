@@ -272,9 +272,13 @@ export class LocalUserStore implements UserStore {
 
 export class LocalGlobalUsage implements GlobalUsage {
   constructor(private readonly db: LocalDatabase) {}
-  async countRequests(since: Date): Promise<number> {
+  async countRequests(since: Date, perUserCap: number): Promise<number> {
     const s = since.toISOString();
-    return (await this.db.read()).usage.filter((u) => u.createdAt >= s).length;
+    const perUser = new Map<string, number>();
+    for (const u of (await this.db.read()).usage) if (u.createdAt >= s) perUser.set(u.userId, (perUser.get(u.userId) ?? 0) + 1);
+    let total = 0;
+    for (const n of perUser.values()) total += Math.min(n, perUserCap);
+    return total;
   }
   async sumCost(since: Date): Promise<number> {
     const s = since.toISOString();

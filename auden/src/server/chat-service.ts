@@ -37,7 +37,7 @@ export async function prepareChat(session: Session, engine: AudenEngine, cfg: Ap
   const quota = await checkQuota(
     {
       countUserRequests: (_u, since) => store.countRequests(since),
-      countGlobalRequests: (since) => session.global.countRequests(since),
+      countGlobalRequests: (since) => session.global.countRequests(since, cfg.limits.userPerDay),
       sumGlobalCost: (since) => session.global.sumCost(since),
     },
     session.user.id,

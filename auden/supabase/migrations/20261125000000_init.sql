@@ -181,7 +181,9 @@ create policy memories_all on public.memories for all to authenticated using (us
 create policy attachments_all on public.attachments for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
 
 create policy usage_select on public.usage_events for select to authenticated using (user_id = auth.uid());
-create policy usage_insert on public.usage_events for insert to authenticated with check (user_id = auth.uid());
+-- Free-models-only phase: users (and therefore the server acting as them) may only record zero-cost usage.
+-- Paid usage must later be recorded server-side with a service role, never through the user's JWT.
+create policy usage_insert on public.usage_events for insert to authenticated with check (user_id = auth.uid() and cost = 0);
 
 create policy consents_select on public.training_consents for select to authenticated using (user_id = auth.uid());
 create policy consents_insert on public.training_consents for insert to authenticated with check (user_id = auth.uid());
@@ -199,13 +201,18 @@ end $$;
 create trigger profiles_protect before update on public.profiles for each row execute function public.protect_profile_email();
 
 -- ---------- aggregate usage for global ceilings (no per-user data leaves the function)
-create or replace function public.global_usage_since(since timestamptz)
+-- Each user's contribution is capped at per_user_cap, so one account inserting rows directly
+-- through the API cannot exhaust the global ceiling for everyone.
+create or replace function public.global_usage_since(since timestamptz, per_user_cap integer)
 returns table (requests bigint, cost numeric)
 language sql security definer stable set search_path = public as $$
-  select count(*)::bigint, coalesce(sum(cost), 0)::numeric from usage_events where created_at >= since;
+  select coalesce(sum(least(n, greatest(per_user_cap, 0))), 0)::bigint, coalesce(sum(c), 0)::numeric
+  from (
+    select count(*) as n, sum(cost) as c from usage_events where created_at >= since group by user_id
+  ) per_user;
 $$;
-revoke all on function public.global_usage_since(timestamptz) from public;
-grant execute on function public.global_usage_since(timestamptz) to authenticated;
+revoke all on function public.global_usage_since(timestamptz, integer) from public;
+grant execute on function public.global_usage_since(timestamptz, integer) to authenticated;
 
 -- ---------- account deletion by the user (cascades to all owned rows)
 create or replace function public.delete_my_account() returns void

@@ -82,6 +82,7 @@ export interface UserStore {
 
 /** Aggregate usage across all users (for global ceilings). Implementations must not leak per-user data. */
 export interface GlobalUsage {
-  countRequests(since: Date): Promise<number>;
+  /** Requests since `since`, counting at most `perUserCap` per user (abuse resistance). */
+  countRequests(since: Date, perUserCap: number): Promise<number>;
   sumCost(since: Date): Promise<number>;
 }
