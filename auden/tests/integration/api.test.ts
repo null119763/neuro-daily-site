@@ -196,6 +196,61 @@ describe("chat streaming and history", () => {
     expect(spy.prompts.at(-1)![0]!.content).toContain("секрет проекта один");
   });
 
+  it("regenerates the last answer without duplicating the user message", async () => {
+    const first = await alice.chat({ message: "Вопрос один" });
+    const convId = first.events[0].conversation.id;
+    await alice.chat({ conversationId: convId, message: "Вопрос два" });
+    const before = (await alice.json("GET", `conversations/${convId}`)).data.messages;
+    expect(before.map((m: any) => m.role)).toEqual(["user", "assistant", "user", "assistant"]);
+
+    const r = await alice.chat({ conversationId: convId, regenerate: true });
+    expect(r.status).toBe(200);
+    expect(r.events[0].userMessage.id).toBe(before[2].id);
+    expect(r.events.at(-1).type).toBe("done");
+    // The prompt ends with the regenerated user turn and does not contain the old answer twice
+    const prompt = spy.prompts.at(-1)!;
+    expect(prompt.map((m) => m.role)).toEqual(["system", "user", "assistant", "user"]);
+    expect(prompt.at(-1)!.content).toBe("Вопрос два");
+
+    const after = (await alice.json("GET", `conversations/${convId}`)).data.messages;
+    expect(after.map((m: any) => m.role)).toEqual(["user", "assistant", "user", "assistant"]);
+    expect(after[3].id).not.toBe(before[3].id);
+    expect(after[2].id).toBe(before[2].id);
+  });
+
+  it("keeps the old answer when regeneration fails, and answers an unanswered message", async () => {
+    const first = await alice.chat({ message: "/mock-error unavailable" });
+    const convId = first.events[0].conversation.id;
+    expect((await alice.json("GET", `conversations/${convId}`)).data.messages.map((m: any) => m.role)).toEqual(["user"]);
+    const retry = await alice.chat({ conversationId: convId, regenerate: true });
+    expect(retry.events.at(-1)).toMatchObject({ type: "error", code: "unavailable" });
+    expect((await alice.json("GET", `conversations/${convId}`)).data.messages).toHaveLength(1);
+
+    const ok = await alice.chat({ message: "Нормальный вопрос" });
+    const okId = ok.events[0].conversation.id;
+    const answer = ok.events.at(-1).message.id;
+    // Make the provider fail for the regeneration and check the original answer survives
+    const original = spy.stream.bind(spy);
+    spy.stream = async function* () {
+      throw new (await import("@/core/types")).ProviderError("unavailable", "down");
+    } as typeof spy.stream;
+    const failed = await alice.chat({ conversationId: okId, regenerate: true });
+    spy.stream = original;
+    expect(failed.events.at(-1)).toMatchObject({ type: "error", code: "unavailable" });
+    const msgs = (await alice.json("GET", `conversations/${okId}`)).data.messages;
+    expect(msgs.map((m: any) => m.id)).toContain(answer);
+  });
+
+  it("validates regenerate requests", async () => {
+    expect((await alice.chat({ regenerate: true })).status).toBe(400);
+    const c = (await alice.json("POST", "conversations", {})).data;
+    const r = await alice.chat({ conversationId: c.id, regenerate: true });
+    expect(r.status).toBe(400);
+    expect(r.events[0].error.code).toBe("nothing_to_regenerate");
+    expect((await bob.chat({ conversationId: c.id, regenerate: true })).status).toBe(404);
+    expect((await alice.chat({ conversationId: c.id, regenerate: true, message: "x" })).status).toBe(400);
+  });
+
   it("reports provider errors and records usage", async () => {
     const r = await alice.chat({ message: "/mock-error unavailable" });
     expect(r.events.at(-1)).toMatchObject({ type: "error", code: "unavailable" });

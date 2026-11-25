@@ -40,11 +40,27 @@ test("stop button cancels streaming and keeps partial text", async ({ page }) =>
   await expect(page.getByText("Ответ остановлен.")).toBeVisible();
 });
 
-test("provider errors are shown clearly with retry", async ({ page }) => {
+test("provider errors are shown clearly; retry does not duplicate the message", async ({ page }) => {
   await signUp(page);
   await sendMessage(page, "/mock-error unavailable");
   await expect(page.locator(".alert")).toContainText("временно недоступен");
-  await expect(page.getByRole("button", { name: "Повторить" })).toBeVisible();
+  await page.locator(".alert").getByRole("button", { name: "Повторить" }).click();
+  await expect(page.locator(".alert")).toContainText("временно недоступен");
+  await page.reload();
+  await expect(page.getByTestId("msg-user")).toHaveCount(1);
+});
+
+test("regenerate replaces the answer instead of repeating the question", async ({ page }) => {
+  await signUp(page);
+  await sendMessage(page, "Первый вопрос");
+  await waitForAnswer(page);
+  await page.getByTestId("msg-ai").getByRole("button", { name: "Повторить" }).click();
+  await expect(page.getByTestId("send")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("msg-user")).toHaveCount(1);
+  await expect(page.getByTestId("msg-ai")).toHaveCount(1);
+  await page.reload();
+  await expect(page.getByTestId("msg-user")).toHaveCount(1);
+  await expect(page.getByTestId("msg-ai")).toHaveCount(1);
 });
 
 test("rename, favourite and delete a chat", async ({ page }) => {

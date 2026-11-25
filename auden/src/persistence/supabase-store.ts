@@ -221,6 +221,11 @@ export class SupabaseUserStore implements UserStore {
     return toMessage(check(res));
   }
 
+  async deleteMessage(id: string): Promise<boolean> {
+    const r = check(await this.sb.from("messages").delete().eq("id", id).eq("user_id", this.userId).select("id"));
+    return (r as Row[]).length > 0;
+  }
+
   async listMemories(opts: { consent?: boolean; projectId?: string | null } = {}): Promise<Memory[]> {
     let q = this.sb.from("memories").select("*").eq("user_id", this.userId);
     if (opts.consent !== undefined) q = q.eq("consent", opts.consent);

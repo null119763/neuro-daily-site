@@ -64,6 +64,8 @@ export interface UserStore {
   listMessages(conversationId: string, opts?: { limit?: number }): Promise<Message[]>;
   /** Appends a message and bumps the conversation's updatedAt. Returns null if the conversation is not owned. */
   addMessage(conversationId: string, input: MessageInput): Promise<Message | null>;
+  /** Deletes one owned message. Used to replace an assistant answer on regenerate. */
+  deleteMessage(id: string): Promise<boolean>;
 
   listMemories(opts?: { consent?: boolean; projectId?: string | null }): Promise<Memory[]>;
   createMemory(input: MemoryInput): Promise<Memory>;

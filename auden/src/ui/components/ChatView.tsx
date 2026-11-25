@@ -37,7 +37,6 @@ export function ChatView({ conversationId, projectId, intro }: { conversationId:
   const scrollRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const stickToBottom = useRef(true);
-  const [lastSent, setLastSent] = useState("");
 
   // Load existing conversation
   useEffect(() => {
@@ -75,30 +74,33 @@ export function ChatView({ conversationId, projectId, intro }: { conversationId:
     el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
   };
 
-  const send = useCallback(
-    async (text: string) => {
-      const message = text.trim();
-      if (!message || busy) return;
+  /**
+   * Streams one answer. For a new message `tmpUser` is shown optimistically; for regenerate the previous
+   * answers (`replaced`) are hidden and restored if no new answer could be produced.
+   */
+  const runStream = useCallback(
+    async (body: Record<string, unknown>, opts: { tmpUser?: UIMessage; replaced?: UIMessage[] }) => {
       setBanner(null);
       setBusy(true);
-      setLastSent(message);
       stickToBottom.current = true;
-      const tmpUser: UIMessage = { id: `tmp-u-${Date.now()}`, role: "user", content: message, provider: null, model: null, status: "complete", createdAt: new Date().toISOString() };
+      const replacedIds = new Set((opts.replaced ?? []).map((m) => m.id));
       const tmpAi: UIMessage = { id: `tmp-a-${Date.now()}`, role: "assistant", content: "", provider: null, model: null, status: "complete", createdAt: new Date().toISOString(), streaming: true };
-      setMessages((m) => [...m, tmpUser, tmpAi]);
-      setInput("");
-      requestAnimationFrame(autosize);
+      setMessages((list) => [...list.filter((m) => !replacedIds.has(m.id)), ...(opts.tmpUser ? [opts.tmpUser] : []), tmpAi]);
 
+      const restoreReplaced = () => setMessages((list) => [...list.filter((m) => m.id !== tmpAi.id), ...(opts.replaced ?? [])]);
       const ctrl = new AbortController();
       abortRef.current = ctrl;
       const patchAi = (fn: (m: UIMessage) => UIMessage) => setMessages((list) => list.map((m) => (m.id === tmpAi.id ? fn(m) : m)));
       let gotTerminal = false;
       try {
-        for await (const ev of streamChat({ conversationId: conversation?.id ?? null, projectId: conversation ? undefined : projectId ?? null, message, mode }, ctrl.signal)) {
+        for await (const ev of streamChat(body, ctrl.signal)) {
           if (ev.type === "start") {
             setConversation(ev.conversation);
             app.upsertConversation(ev.conversation);
-            setMessages((list) => list.map((m) => (m.id === tmpUser.id ? { ...ev.userMessage, proposal: ev.memoryProposal } : m)));
+            if (opts.tmpUser) {
+              const tmpId = opts.tmpUser.id;
+              setMessages((list) => list.map((m) => (m.id === tmpId ? { ...ev.userMessage, proposal: ev.memoryProposal } : m)));
+            }
             if (!conversationId) window.history.replaceState(null, "", `/c/${ev.conversation.id}`);
           } else if (ev.type === "route") {
             patchAi((m) => ({ ...m, provider: ev.provider, model: ev.model }));
@@ -113,26 +115,32 @@ export function ChatView({ conversationId, projectId, intro }: { conversationId:
               const saved = ev.saved;
               setMessages((list) => list.map((m) => (m.id === tmpAi.id ? { ...saved, errorCode: ev.code } : m)));
             } else {
-              setMessages((list) => list.filter((m) => m.id !== tmpAi.id));
+              restoreReplaced();
               if (ev.code !== "cancelled") setBanner(errorText(locale, ev.code));
             }
           }
         }
         if (!gotTerminal) {
-          // Stream ended without a final event: user pressed stop or connection dropped.
+          // Stream ended without a final event: user pressed stop or the connection dropped.
           patchAi((m) => ({ ...m, streaming: false, status: "cancelled", errorCode: ctrl.signal.aborted ? "cancelled" : "network" }));
-          setMessages((list) => list.filter((m) => !(m.id === tmpAi.id && !m.content)));
+          setMessages((list) => {
+            const ai = list.find((m) => m.id === tmpAi.id);
+            return ai && !ai.content ? [...list.filter((m) => m.id !== tmpAi.id), ...(opts.replaced ?? [])] : list;
+          });
         }
       } catch (e) {
-        setMessages((list) => list.filter((m) => m.id !== tmpAi.id));
         const err = e as ApiError;
         if (err.code === "unauthorized") {
           router.replace("/login");
           return;
         }
-        // Request rejected before streaming: restore the user's text so nothing is lost.
-        setMessages((list) => list.filter((m) => m.id !== tmpUser.id));
-        setInput(message);
+        restoreReplaced();
+        if (opts.tmpUser) {
+          // Rejected before streaming: remove the optimistic message and give the text back.
+          const tmpId = opts.tmpUser.id;
+          setMessages((list) => list.filter((m) => m.id !== tmpId));
+          setInput(opts.tmpUser.content);
+        }
         setBanner(errorText(locale, err.code));
       } finally {
         abortRef.current = null;
@@ -140,8 +148,29 @@ export function ChatView({ conversationId, projectId, intro }: { conversationId:
         app.refreshConversations().catch(() => undefined);
       }
     },
-    [busy, conversation, conversationId, projectId, mode, locale, app, router],
+    [conversationId, locale, app, router],
   );
+
+  const send = useCallback(
+    async (text: string) => {
+      const message = text.trim();
+      if (!message || busy) return;
+      setInput("");
+      requestAnimationFrame(autosize);
+      const tmpUser: UIMessage = { id: `tmp-u-${Date.now()}`, role: "user", content: message, provider: null, model: null, status: "complete", createdAt: new Date().toISOString() };
+      await runStream({ conversationId: conversation?.id ?? null, projectId: conversation ? undefined : projectId ?? null, message, mode }, { tmpUser });
+    },
+    [busy, conversation, projectId, mode, runStream],
+  );
+
+  /** New answer for the last user message, replacing the answer(s) after it — no duplicate user message. */
+  const regenerate = useCallback(async () => {
+    if (busy || !conversation) return;
+    let i = messages.length - 1;
+    while (i >= 0 && messages[i]!.role === "assistant") i--;
+    if (i < 0 || messages[i]!.id.startsWith("tmp")) return;
+    await runStream({ conversationId: conversation.id, regenerate: true, mode }, { replaced: messages.slice(i + 1) });
+  }, [busy, conversation, messages, mode, runStream]);
 
   function stop() {
     abortRef.current?.abort();
@@ -211,6 +240,9 @@ export function ChatView({ conversationId, projectId, intro }: { conversationId:
   const projectTitle = conversation?.projectId ? app.projects.find((p) => p.id === conversation.projectId)?.title : app.projects.find((p) => p.id === projectId)?.title;
   const lastAi = [...messages].reverse().find((m) => m.role === "assistant");
   const showMock = messages.some((m) => m.provider === "mock");
+  const lastMsg = messages[messages.length - 1];
+  // A saved user message with no answer after it (the answer failed): offer to generate one.
+  const canRegenerate = Boolean(conversation && lastMsg?.role === "user" && !lastMsg.id.startsWith("tmp"));
 
   if (notFound) {
     return (
@@ -296,14 +328,14 @@ export function ChatView({ conversationId, projectId, intro }: { conversationId:
                 )}
               </div>
             ) : (
-              <AssistantMessage key={m.id} m={m} isLast={m.id === lastAi?.id} onRetry={!busy ? () => send(lastSent || findPrevUser(messages, m.id)) : undefined} />
+              <AssistantMessage key={m.id} m={m} isLast={m.id === lastAi?.id} onRetry={!busy ? () => void regenerate() : undefined} />
             ),
           )}
           {banner && (
             <div className="alert" role="alert">
               {banner}{" "}
-              {lastSent && !busy && !input && (
-                <button className="btn btn-ghost" style={{ minHeight: 28, padding: "2px 8px" }} onClick={() => send(lastSent)}>{t("chat.retry")}</button>
+              {canRegenerate && !busy && (
+                <button className="btn btn-ghost" style={{ minHeight: 28, padding: "2px 8px" }} onClick={() => void regenerate()}>{t("chat.retry")}</button>
               )}
             </div>
           )}
@@ -364,12 +396,6 @@ export function ChatView({ conversationId, projectId, intro }: { conversationId:
       </div>
     </>
   );
-}
-
-function findPrevUser(list: UIMessage[], aiId: string): string {
-  const i = list.findIndex((m) => m.id === aiId);
-  for (let j = i - 1; j >= 0; j--) if (list[j]!.role === "user") return list[j]!.content;
-  return "";
 }
 
 function AssistantMessage({ m, isLast, onRetry }: { m: UIMessage; isLast: boolean; onRetry?: () => void }) {
