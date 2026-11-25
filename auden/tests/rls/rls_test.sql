@@ -117,4 +117,39 @@ do $$ begin
   assert (select count(*) from public.profiles) = 0, 'unauthenticated sees nothing';
 end $$;
 reset role;
+-- Sign-up modes are enforced by the database
+update public.app_config set value = 'allowlist' where key = 'signup_mode';
+insert into public.signup_allowlist (entry) values ('invited@test.dev'), ('@team.dev');
+insert into auth.users (email) values ('invited@test.dev'), ('anyone@team.dev');
+do $$ begin
+  begin
+    insert into auth.users (email) values ('stranger@test.dev');
+    raise exception 'uninvited sign-up should fail';
+  exception when insufficient_privilege then null;
+  end;
+end $$;
+update public.app_config set value = 'closed' where key = 'signup_mode';
+do $$ begin
+  begin
+    insert into auth.users (email) values ('late@team.dev');
+    raise exception 'closed sign-up should fail';
+  exception when insufficient_privilege then null;
+  end;
+end $$;
+-- Clients cannot read or change the allowlist or the mode
+select pg_temp.as_user((select id from auth.users where email = 'invited@test.dev'));
+do $$ begin
+  begin
+    perform 1 from public.signup_allowlist;
+    raise exception 'allowlist should not be readable';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    update public.app_config set value = 'open';
+    raise exception 'config should not be writable';
+  exception when insufficient_privilege then null;
+  end;
+end $$;
+reset role;
+update public.app_config set value = 'open' where key = 'signup_mode';
 \echo 'RLS tests passed'

@@ -36,6 +36,20 @@ AUDEN_CUSTOM_MODES=prime        # какие режимы сначала иду�
 
 > Адаптер Supabase написан, а схема и RLS проверены на настоящем Postgres, но сквозная проверка с живым проектом Supabase ещё не выполнялась.
 
+### Закрытая альфа
+
+```env
+AUDEN_SIGNUP_MODE=allowlist
+AUDEN_ALLOWED_EMAILS=friend@example.com,@mycompany.com
+```
+
+С Supabase дополнительно (база блокирует и прямую регистрацию через API):
+
+```sql
+update public.app_config set value = 'allowlist' where key = 'signup_mode';
+insert into public.signup_allowlist (entry) values ('friend@example.com'), ('@mycompany.com');
+```
+
 ## Команды
 
 | Команда | Что делает |

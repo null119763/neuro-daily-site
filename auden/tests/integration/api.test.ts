@@ -102,8 +102,41 @@ describe("auth", () => {
     expect((await c.json("POST", "auth/signup", { email: "x@test.dev", password: "long enough", acceptTerms: false })).status).toBe(400);
   });
 
+  it("allows only invited emails in allowlist mode", async () => {
+    const alpha = makeRuntime({ AUDEN_SIGNUP_MODE: "allowlist", AUDEN_ALLOWED_EMAILS: "vip@test.dev,@team.dev" });
+    expect((await new Client(alpha.rt).signUp("stranger@test.dev")).status).toBe(403);
+    const r = await new Client(alpha.rt).signUp("stranger@test.dev");
+    expect(r.data.error.code).toBe("not_invited");
+    expect((await new Client(alpha.rt).signUp("vip@test.dev")).status).toBe(201);
+    expect((await new Client(alpha.rt).signUp("dev@team.dev")).status).toBe(201);
+    const s = await new Client(alpha.rt).json("GET", "auth/session");
+    expect(s.data.signupMode).toBe("allowlist");
+  });
+
+  it("locks sign-in after repeated wrong passwords, without blocking other accounts", async () => {
+    const anon = new Client(rt);
+    for (let i = 0; i < 5; i++) {
+      expect((await anon.json("POST", "auth/signin", { email: "alice@test.dev", password: "wrong password" })).status).toBe(401);
+    }
+    const locked = await anon.call("POST", "auth/signin", { email: "alice@test.dev", password: "correct horse" });
+    expect(locked.status).toBe(429);
+    expect(Number(locked.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect((await locked.json()).error.code).toBe("too_many_attempts");
+    expect((await anon.json("POST", "auth/signin", { email: "bob@test.dev", password: "correct horse" })).status).toBe(200);
+  });
+
+  it("limits sign-ups per IP", async () => {
+    const fresh = makeRuntime();
+    const statuses: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const res = await new Client(fresh.rt).call("POST", "auth/signup", { email: `u${i}@test.dev`, password: "correct horse", acceptTerms: true }, { "x-forwarded-for": "198.51.100.7" });
+      statuses.push(res.status);
+    }
+    expect(statuses).toEqual([201, 201, 201, 201, 201, 429]);
+  });
+
   it("can close sign-ups", async () => {
-    const closed = makeRuntime({ AUDEN_SIGNUPS_OPEN: "false" });
+    const closed = makeRuntime({ AUDEN_SIGNUP_MODE: "closed" });
     expect((await new Client(closed.rt).signUp("c@test.dev")).status).toBe(403);
   });
 });
@@ -161,6 +194,61 @@ describe("chat streaming and history", () => {
     expect(spy.prompts.at(-1)![0]!.content).not.toContain("секрет проекта один");
     await alice.chat({ message: "q", projectId: p1.id });
     expect(spy.prompts.at(-1)![0]!.content).toContain("секрет проекта один");
+  });
+
+  it("regenerates the last answer without duplicating the user message", async () => {
+    const first = await alice.chat({ message: "Вопрос один" });
+    const convId = first.events[0].conversation.id;
+    await alice.chat({ conversationId: convId, message: "Вопрос два" });
+    const before = (await alice.json("GET", `conversations/${convId}`)).data.messages;
+    expect(before.map((m: any) => m.role)).toEqual(["user", "assistant", "user", "assistant"]);
+
+    const r = await alice.chat({ conversationId: convId, regenerate: true });
+    expect(r.status).toBe(200);
+    expect(r.events[0].userMessage.id).toBe(before[2].id);
+    expect(r.events.at(-1).type).toBe("done");
+    // The prompt ends with the regenerated user turn and does not contain the old answer twice
+    const prompt = spy.prompts.at(-1)!;
+    expect(prompt.map((m) => m.role)).toEqual(["system", "user", "assistant", "user"]);
+    expect(prompt.at(-1)!.content).toBe("Вопрос два");
+
+    const after = (await alice.json("GET", `conversations/${convId}`)).data.messages;
+    expect(after.map((m: any) => m.role)).toEqual(["user", "assistant", "user", "assistant"]);
+    expect(after[3].id).not.toBe(before[3].id);
+    expect(after[2].id).toBe(before[2].id);
+  });
+
+  it("keeps the old answer when regeneration fails, and answers an unanswered message", async () => {
+    const first = await alice.chat({ message: "/mock-error unavailable" });
+    const convId = first.events[0].conversation.id;
+    expect((await alice.json("GET", `conversations/${convId}`)).data.messages.map((m: any) => m.role)).toEqual(["user"]);
+    const retry = await alice.chat({ conversationId: convId, regenerate: true });
+    expect(retry.events.at(-1)).toMatchObject({ type: "error", code: "unavailable" });
+    expect((await alice.json("GET", `conversations/${convId}`)).data.messages).toHaveLength(1);
+
+    const ok = await alice.chat({ message: "Нормальный вопрос" });
+    const okId = ok.events[0].conversation.id;
+    const answer = ok.events.at(-1).message.id;
+    // Make the provider fail for the regeneration and check the original answer survives
+    const original = spy.stream.bind(spy);
+    spy.stream = async function* () {
+      throw new (await import("@/core/types")).ProviderError("unavailable", "down");
+    } as typeof spy.stream;
+    const failed = await alice.chat({ conversationId: okId, regenerate: true });
+    spy.stream = original;
+    expect(failed.events.at(-1)).toMatchObject({ type: "error", code: "unavailable" });
+    const msgs = (await alice.json("GET", `conversations/${okId}`)).data.messages;
+    expect(msgs.map((m: any) => m.id)).toContain(answer);
+  });
+
+  it("validates regenerate requests", async () => {
+    expect((await alice.chat({ regenerate: true })).status).toBe(400);
+    const c = (await alice.json("POST", "conversations", {})).data;
+    const r = await alice.chat({ conversationId: c.id, regenerate: true });
+    expect(r.status).toBe(400);
+    expect(r.events[0].error.code).toBe("nothing_to_regenerate");
+    expect((await bob.chat({ conversationId: c.id, regenerate: true })).status).toBe(404);
+    expect((await alice.chat({ conversationId: c.id, regenerate: true, message: "x" })).status).toBe(400);
   });
 
   it("reports provider errors and records usage", async () => {

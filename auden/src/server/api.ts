@@ -18,6 +18,7 @@ import type { Session } from "./backend";
 import { prepareChat, type ChatStreamEvent } from "./chat-service";
 import { assertSameOrigin, errorJson, HttpError, json, readJson, RequestCookieJar } from "./http";
 import type { Runtime } from "./runtime";
+import { clientIp } from "./rate-limit";
 import type { z } from "zod";
 
 type Ctx = { req: Request; rt: Runtime; jar: RequestCookieJar; url: URL; params: string[] };
@@ -46,15 +47,28 @@ const notFound = () => errorJson(404, "not_found");
 // ---------------- auth
 const signUp: Handler = async (ctx) => {
   const input = parse(signUpSchema, await readJson(ctx.req));
+  const wait = ctx.rt.authThrottle.takeSignUp(clientIp(ctx.req, ctx.rt.config.trustProxy));
+  if (wait) return errorJson(429, "too_many_attempts", "Too many sign-up attempts", { retryAfterSec: wait });
   const r = await ctx.rt.backend.signUp(ctx.jar, { email: input.email, password: input.password, displayName: input.displayName ?? null });
-  if (!r.ok) return errorJson(r.code === "email_taken" ? 409 : r.code === "signups_closed" ? 403 : 400, r.code);
+  if (!r.ok) {
+    const status = r.code === "email_taken" ? 409 : r.code === "signups_closed" || r.code === "not_invited" ? 403 : 400;
+    return errorJson(status, r.code);
+  }
   return json({ ok: true, needsEmailConfirmation: r.needsEmailConfirmation ?? false }, 201);
 };
 
 const signIn: Handler = async (ctx) => {
   const input = parse(credentialsSchema, await readJson(ctx.req));
+  const ip = clientIp(ctx.req, ctx.rt.config.trustProxy);
+  const throttle = ctx.rt.authThrottle;
+  const wait = throttle.signInBlockedFor(input.email, ip);
+  if (wait) return errorJson(429, "too_many_attempts", "Too many sign-in attempts", { retryAfterSec: wait });
   const r = await ctx.rt.backend.signIn(ctx.jar, input);
-  if (!r.ok) return errorJson(401, r.code);
+  if (!r.ok) {
+    throttle.recordSignInFailure(input.email, ip);
+    return errorJson(401, r.code);
+  }
+  throttle.recordSignInSuccess(input.email);
   return json({ ok: true });
 };
 
@@ -65,8 +79,9 @@ const signOut: Handler = async (ctx) => {
 
 const sessionInfo: Handler = async (ctx) => {
   const s = await ctx.rt.backend.getSession(ctx.jar);
-  if (!s) return json({ user: null, backend: ctx.rt.backend.kind, signupsOpen: ctx.rt.config.signupsOpen });
-  return json({ user: s.user, profile: await s.store.getProfile(), backend: ctx.rt.backend.kind, signupsOpen: ctx.rt.config.signupsOpen });
+  const signupMode = ctx.rt.config.signupMode;
+  if (!s) return json({ user: null, backend: ctx.rt.backend.kind, signupMode });
+  return json({ user: s.user, profile: await s.store.getProfile(), backend: ctx.rt.backend.kind, signupMode });
 };
 
 // ---------------- profile & account

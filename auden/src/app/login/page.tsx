@@ -10,5 +10,5 @@ export default async function LoginPage() {
   if (await getServerSession()) redirect("/");
   const c = await cookies();
   const rt = getRuntime();
-  return <LoginForm locale={c.get("auden_locale")?.value === "en" ? "en" : "ru"} backend={rt.backend.kind} signupsOpen={rt.config.signupsOpen} />;
+  return <LoginForm locale={c.get("auden_locale")?.value === "en" ? "en" : "ru"} backend={rt.backend.kind} signupMode={rt.config.signupMode} />;
 }

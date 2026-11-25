@@ -179,6 +179,15 @@ export class LocalUserStore implements UserStore {
     });
   }
 
+  async deleteMessage(id: string): Promise<boolean> {
+    return this.db.mutate((d) => {
+      const i = d.messages.findIndex((m) => m.id === id && m.userId === this.userId);
+      if (i < 0) return false;
+      d.messages.splice(i, 1);
+      return true;
+    });
+  }
+
   // ---- memories
   async listMemories(opts: { consent?: boolean; projectId?: string | null } = {}): Promise<Memory[]> {
     let list = (await this.d()).memories.filter((m) => m.userId === this.userId);

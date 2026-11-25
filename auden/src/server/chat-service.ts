@@ -54,24 +54,40 @@ export async function prepareChat(session: Session, engine: AudenEngine, cfg: Ap
     return { ok: false, status: 404, code: "not_found", message: "Project not found" };
   }
 
+  // Regenerate: reuse the last user message and drop the assistant answers that followed it.
+  let regen: { userMessage: Message; before: Message[]; drop: Message[] } | null = null;
+  if (req.regenerate && conversation) {
+    const recent = await store.listMessages(conversation.id, { limit: HISTORY_LIMIT + 10 });
+    let i = recent.length - 1;
+    while (i >= 0 && recent[i]!.role === "assistant") i--;
+    if (i < 0) return { ok: false, status: 400, code: "nothing_to_regenerate", message: "No user message to answer" };
+    regen = { userMessage: recent[i]!, before: recent.slice(0, i), drop: recent.slice(i + 1) };
+  }
+  const userText = regen ? regen.userMessage.content : req.message!;
+
   const run = async function* (signal: AbortSignal): AsyncGenerator<ChatStreamEvent> {
     const mode: Mode = req.mode ?? conversation?.mode ?? profile.defaultMode;
     if (!conversation) {
-      conversation = await store.createConversation({ title: deriveTitle(req.message), projectId: req.projectId ?? null, mode });
+      conversation = await store.createConversation({ title: deriveTitle(userText), projectId: req.projectId ?? null, mode });
     } else if (conversation.mode !== mode) {
       conversation = (await store.updateConversation(conversation.id, { mode })) ?? conversation;
     }
     const conv = conversation;
 
     const [history, project, memories] = await Promise.all([
-      store.listMessages(conv.id, { limit: HISTORY_LIMIT }),
+      regen ? Promise.resolve(regen.before.slice(-HISTORY_LIMIT)) : store.listMessages(conv.id, { limit: HISTORY_LIMIT }),
       conv.projectId ? store.getProject(conv.projectId) : Promise.resolve(null),
       profile.memoryEnabled ? store.listMemories({ consent: true, projectId: conv.projectId }) : Promise.resolve([]),
     ]);
 
-    const userMessage = (await store.addMessage(conv.id, { role: "user", content: req.message }))!;
+    let userMessage: Message;
+    if (regen) {
+      userMessage = regen.userMessage;
+    } else {
+      userMessage = (await store.addMessage(conv.id, { role: "user", content: userText }))!;
+    }
     let memoryProposal: Memory | null = null;
-    const fact = profile.memoryEnabled ? detectMemoryProposal(req.message) : null;
+    const fact = profile.memoryEnabled && !regen ? detectMemoryProposal(userText) : null;
     if (fact) {
       memoryProposal = await store.createMemory({ content: fact, projectId: conv.projectId, source: "chat", sourceConversationId: conv.id, consent: false });
     }
@@ -84,10 +100,14 @@ export async function prepareChat(session: Session, engine: AudenEngine, cfg: Ap
       project: project ? { title: project.title, instructions: project.instructions } : null,
       memories,
       history: history.filter((m) => m.status === "complete").map((m) => ({ role: m.role, content: m.content })),
-      userMessage: req.message,
+      userMessage: userText,
       maxInputTokens: cfg.maxContextTokens,
     });
 
+    // The previous answer is replaced only once a new one (complete or partial) is saved.
+    const dropReplaced = async () => {
+      if (regen) for (const m of regen.drop) await store.deleteMessage(m.id);
+    };
     let routed: { provider: string; model: string } | null = null;
     for await (const ev of engine.run({ mode, messages, signal, maxOutputTokens: cfg.maxOutputTokens })) {
       if (ev.type === "route") {
@@ -96,6 +116,7 @@ export async function prepareChat(session: Session, engine: AudenEngine, cfg: Ap
       } else if (ev.type === "delta") {
         yield { type: "delta", text: ev.text };
       } else if (ev.type === "done") {
+        await dropReplaced();
         const message = (await store.addMessage(conv.id, {
           role: "assistant",
           content: ev.text,
@@ -111,6 +132,7 @@ export async function prepareChat(session: Session, engine: AudenEngine, cfg: Ap
         const status = ev.code === "cancelled" ? "cancelled" : "error";
         let saved: Message | null = null;
         if (ev.partialText) {
+          await dropReplaced();
           saved = await store.addMessage(conv.id, {
             role: "assistant",
             content: ev.partialText,

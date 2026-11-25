@@ -63,12 +63,23 @@ export const memoryCreateSchema = z.object({
 export const memoryPatchSchema = z.object({ content: trimmed(LIMITS.memory), consent: z.boolean() }).partial().strict();
 
 export function chatRequestSchema(maxInputChars: number) {
-  return z.object({
-    conversationId: uuid.nullable().optional(),
-    projectId: uuid.nullable().optional(),
-    message: z.string().trim().min(1).max(maxInputChars),
-    mode: z.enum(MODES).optional(),
-  });
+  return z
+    .object({
+      conversationId: uuid.nullable().optional(),
+      projectId: uuid.nullable().optional(),
+      message: z.string().trim().min(1).max(maxInputChars).optional(),
+      mode: z.enum(MODES).optional(),
+      /** Replace the last assistant answer with a new one for the same user message. */
+      regenerate: z.boolean().optional(),
+    })
+    .superRefine((v, ctx) => {
+      if (v.regenerate) {
+        if (!v.conversationId) ctx.addIssue({ code: "custom", path: ["conversationId"], message: "conversationId is required to regenerate" });
+        if (v.message !== undefined) ctx.addIssue({ code: "custom", path: ["message"], message: "message must be omitted when regenerating" });
+      } else if (v.message === undefined) {
+        ctx.addIssue({ code: "custom", path: ["message"], message: "message is required" });
+      }
+    });
 }
 
 export function isUuid(v: string): boolean {
