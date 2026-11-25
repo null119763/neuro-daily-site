@@ -1,23 +1,19 @@
-/** Preliminary Auden mark: a four-point spark. Trademark clearance pending (DECISIONS P6). */
-export function LogoMark({ size = 28, className = "logo-mark" }: { size?: number; className?: string }) {
-  return (
-    <svg className={className} width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" fill="none">
-      <path
-        d="M12 1.8c.55 5.3 3.6 8.55 9.2 10.2-5.6 1.65-8.65 4.9-9.2 10.2-.55-5.3-3.6-8.55-9.2-10.2C8.4 10.35 11.45 7.1 12 1.8Z"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
+/**
+ * Auden mark: eight tapered rays — long vertical/horizontal rays and shorter, softer diagonals
+ * (from the owner's app icon, docs/design/app-icon.jpg).
+ */
+const RAY = "M12 11.4C11.68 8.6 11.18 5.2 11.18 3.25a.82.82 0 0 1 1.64 0C12.82 5.2 12.32 8.6 12 11.4Z";
 
-export function Brand({ href = "/", size = 28 }: { href?: string; size?: number }) {
+export function LogoMark({ size = 28, className = "logo-mark", title }: { size?: number; className?: string; title?: string }) {
   return (
-    <a className="brand" href={href} aria-label="Auden">
-      <LogoMark size={size} />
-      <span className="brand-name">Auden</span>
-    </a>
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="currentColor" role={title ? "img" : undefined} aria-label={title} aria-hidden={title ? undefined : true}>
+      {[0, 90, 180, 270].map((a) => (
+        <path key={a} d={RAY} transform={`rotate(${a} 12 12)`} />
+      ))}
+      {[45, 135, 225, 315].map((a) => (
+        <path key={a} d={RAY} opacity={0.72} transform={`rotate(${a} 12 12) translate(12 12) scale(0.74) translate(-12 -12)`} />
+      ))}
+    </svg>
   );
 }
 
