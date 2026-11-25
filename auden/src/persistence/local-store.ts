@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type { Conversation, Memory, Message, Profile, Project, UsageEvent } from "@/domain/types";
+import type { Attachment, AttachmentWithContent, Conversation, Memory, Message, Profile, Project, UsageEvent } from "@/domain/types";
 import type { LocalData, LocalDatabase } from "./local-db";
 import type {
+  AttachmentInput,
   ConversationFilter,
   ConversationInput,
   ConversationPatch,
@@ -18,6 +19,7 @@ import type {
 
 const nowIso = () => new Date().toISOString();
 const clone = <T>(v: T): T => structuredClone(v);
+const meta = ({ content, ...rest }: AttachmentWithContent): Attachment => (void content, rest);
 const byUpdatedDesc = (a: { updatedAt: string }, b: { updatedAt: string }) => b.updatedAt.localeCompare(a.updatedAt);
 
 export function defaultProfile(id: string, email: string, displayName: string | null): Profile {
@@ -144,6 +146,7 @@ export class LocalUserStore implements UserStore {
       if (i < 0) return false;
       d.conversations.splice(i, 1);
       d.messages = d.messages.filter((m) => m.conversationId !== id);
+      d.attachments = d.attachments.filter((a) => a.conversationId !== id);
       for (const m of d.memories) if (m.sourceConversationId === id) m.sourceConversationId = null;
       return true;
     });
@@ -231,6 +234,71 @@ export class LocalUserStore implements UserStore {
     });
   }
 
+  // ---- attachments
+  async createAttachment(input: AttachmentInput): Promise<Attachment> {
+    const a: AttachmentWithContent = {
+      id: randomUUID(),
+      userId: this.userId,
+      conversationId: null,
+      messageId: null,
+      chars: input.content.length,
+      createdAt: nowIso(),
+      ...input,
+    };
+    await this.db.mutate((d) => d.attachments.push(a));
+    return meta(clone(a));
+  }
+
+  async getAttachments(ids: string[]): Promise<Attachment[]> {
+    const set = new Set(ids);
+    return (await this.d()).attachments.filter((a) => set.has(a.id) && a.userId === this.userId).map((a) => meta(clone(a)));
+  }
+
+  async listConversationAttachments(conversationId: string): Promise<AttachmentWithContent[]> {
+    return clone((await this.d()).attachments.filter((a) => a.conversationId === conversationId && a.userId === this.userId && a.messageId));
+  }
+
+  async linkAttachments(ids: string[], conversationId: string, messageId: string): Promise<number> {
+    const set = new Set(ids);
+    return this.db.mutate((d) => {
+      const conv = d.conversations.find((c) => c.id === conversationId && c.userId === this.userId);
+      const msg = d.messages.find((m) => m.id === messageId && m.conversationId === conversationId && m.userId === this.userId);
+      if (!conv || !msg) return 0;
+      let n = 0;
+      for (const a of d.attachments) {
+        if (set.has(a.id) && a.userId === this.userId && !a.messageId) {
+          a.conversationId = conversationId;
+          a.messageId = messageId;
+          n++;
+        }
+      }
+      return n;
+    });
+  }
+
+  async deleteAttachment(id: string): Promise<boolean> {
+    return this.db.mutate((d) => {
+      const i = d.attachments.findIndex((a) => a.id === id && a.userId === this.userId && !a.messageId);
+      if (i < 0) return false;
+      d.attachments.splice(i, 1);
+      return true;
+    });
+  }
+
+  async deleteStaleUploads(before: Date): Promise<number> {
+    const b = before.toISOString();
+    return this.db.mutate((d) => {
+      const n = d.attachments.length;
+      d.attachments = d.attachments.filter((a) => !(a.userId === this.userId && !a.messageId && a.createdAt < b));
+      return n - d.attachments.length;
+    });
+  }
+
+  async countAttachments(since: Date): Promise<number> {
+    const s = since.toISOString();
+    return (await this.d()).attachments.filter((a) => a.userId === this.userId && a.createdAt >= s).length;
+  }
+
   // ---- usage
   async recordUsage(input: UsageInput): Promise<void> {
     const e: UsageEvent = { id: randomUUID(), userId: this.userId, createdAt: nowIso(), ...input };
@@ -259,6 +327,7 @@ export class LocalUserStore implements UserStore {
       projects: d.projects.filter((p) => p.userId === this.userId),
       conversations,
       memories: d.memories.filter((m) => m.userId === this.userId),
+      attachments: d.attachments.filter((a) => a.userId === this.userId),
       usage: d.usage.filter((u) => u.userId === this.userId),
     });
   }
@@ -273,6 +342,7 @@ export class LocalUserStore implements UserStore {
       d.conversations = d.conversations.filter((c) => c.userId !== uid);
       d.messages = d.messages.filter((m) => m.userId !== uid);
       d.memories = d.memories.filter((m) => m.userId !== uid);
+      d.attachments = d.attachments.filter((a) => a.userId !== uid);
       // Usage rows are kept anonymised for global quota/accounting integrity until the day rolls over.
       for (const u of d.usage) if (u.userId === uid) u.userId = "deleted";
     });

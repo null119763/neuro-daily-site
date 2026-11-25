@@ -19,6 +19,7 @@ import { prepareChat, type ChatStreamEvent } from "./chat-service";
 import { assertSameOrigin, errorJson, HttpError, json, readJson, RequestCookieJar } from "./http";
 import type { Runtime } from "./runtime";
 import { clientIp } from "./rate-limit";
+import { ATTACHMENT_LIMITS, AttachmentError, extractAttachment } from "./attachments";
 import type { z } from "zod";
 
 type Ctx = { req: Request; rt: Runtime; jar: RequestCookieJar; url: URL; params: string[] };
@@ -160,7 +161,8 @@ const getConversation: Handler = async (ctx) => {
   const s = await requireSession(ctx);
   const c = await s.store.getConversation(idParam(ctx));
   if (!c) return notFound();
-  return json({ ...c, messages: await s.store.listMessages(c.id) });
+  const [messages, attachments] = await Promise.all([s.store.listMessages(c.id), s.store.listConversationAttachments(c.id)]);
+  return json({ ...c, messages, attachments: attachments.map(({ content, ...meta }) => (void content, meta)) });
 };
 const patchConversation: Handler = async (ctx) => {
   const s = await requireSession(ctx);
@@ -199,6 +201,51 @@ const deleteAllMemory: Handler = async (ctx) => {
   return json({ deleted: await s.store.deleteAllMemories() });
 };
 
+// ---------------- attachments
+const ATTACHMENT_ERROR_STATUS: Record<AttachmentError["code"], number> = {
+  too_large: 413,
+  unsupported_type: 415,
+  empty_file: 400,
+  no_text: 422,
+  pdf_error: 422,
+  too_many_pages: 413,
+  binary_text: 415,
+};
+
+const uploadAttachment: Handler = async (ctx) => {
+  const s = await requireSession(ctx);
+  if (!(ctx.req.headers.get("content-type") ?? "").includes("multipart/form-data")) throw new HttpError(415, "unsupported_media_type");
+  const declared = Number(ctx.req.headers.get("content-length") ?? 0);
+  if (declared > ATTACHMENT_LIMITS.maxBytes + 64 * 1024) return errorJson(413, "too_large");
+
+  const since = new Date(Date.now() - 86_400_000);
+  if ((await s.store.countAttachments(since)) >= ATTACHMENT_LIMITS.perDay) return errorJson(429, "upload_limit", "Daily upload limit reached");
+  // Opportunistic cleanup of uploads that were never sent.
+  await s.store.deleteStaleUploads(since).catch(() => 0);
+
+  let file: FormDataEntryValue | null;
+  try {
+    file = (await ctx.req.formData()).get("file");
+  } catch {
+    throw new HttpError(400, "invalid_form");
+  }
+  if (!file || typeof file === "string") throw new HttpError(400, "file_required");
+  if (file.size > ATTACHMENT_LIMITS.maxBytes) return errorJson(413, "too_large");
+  try {
+    const extracted = await extractAttachment(file.name, new Uint8Array(await file.arrayBuffer()));
+    const a = await s.store.createAttachment({ name: extracted.name, mime: extracted.mime, size: extracted.size, content: extracted.text, truncated: extracted.truncated });
+    return json(a, 201);
+  } catch (e) {
+    if (e instanceof AttachmentError) return errorJson(ATTACHMENT_ERROR_STATUS[e.code], e.code, e.message);
+    throw e;
+  }
+};
+
+const deleteAttachment: Handler = async (ctx) => {
+  const s = await requireSession(ctx);
+  return (await s.store.deleteAttachment(idParam(ctx))) ? json({ ok: true }) : notFound();
+};
+
 // ---------------- usage & models
 const usage: Handler = async (ctx) => {
   const s = await requireSession(ctx);
@@ -212,6 +259,7 @@ const usage: Handler = async (ctx) => {
       cost: events.reduce((a, e) => a + e.cost, 0),
     },
     limits: { perDay: ctx.rt.config.limits.userPerDay, perMinute: ctx.rt.config.limits.userPerMinute },
+    attachments: { maxBytes: ATTACHMENT_LIMITS.maxBytes, perMessage: ATTACHMENT_LIMITS.perMessage, perDay: ATTACHMENT_LIMITS.perDay },
     resetsAt: new Date(today.getTime() + 86_400_000).toISOString(),
   });
 };
@@ -312,6 +360,8 @@ const routes: Route[] = [
   ["DELETE", "memory", deleteAllMemory],
   ["PATCH", "memory/:id", patchMemory],
   ["DELETE", "memory/:id", deleteMemory],
+  ["POST", "attachments", uploadAttachment],
+  ["DELETE", "attachments/:id", deleteAttachment],
   ["GET", "usage", usage],
   ["GET", "models", models],
 ];

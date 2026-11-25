@@ -1,5 +1,7 @@
 import type { Mode } from "@/core/types";
 import type {
+  Attachment,
+  AttachmentWithContent,
   Conversation,
   Memory,
   MemorySource,
@@ -27,6 +29,7 @@ export type MessageInput = {
 };
 export type MemoryInput = { content: string; projectId: string | null; source: MemorySource; sourceConversationId: string | null; consent: boolean };
 export type MemoryPatch = Partial<Pick<Memory, "content" | "consent">>;
+export type AttachmentInput = Pick<AttachmentWithContent, "name" | "mime" | "size" | "content" | "truncated">;
 export type UsageInput = Omit<UsageEvent, "id" | "userId" | "createdAt">;
 
 export interface ConversationFilter {
@@ -72,6 +75,19 @@ export interface UserStore {
   updateMemory(id: string, patch: MemoryPatch): Promise<Memory | null>;
   deleteMemory(id: string): Promise<boolean>;
   deleteAllMemories(): Promise<number>;
+
+  createAttachment(input: AttachmentInput): Promise<Attachment>;
+  /** Owned attachments by id (metadata only). Missing or foreign ids are silently skipped. */
+  getAttachments(ids: string[]): Promise<Attachment[]>;
+  /** All attachments sent in a conversation, oldest first, with extracted text (for model context). */
+  listConversationAttachments(conversationId: string): Promise<AttachmentWithContent[]>;
+  /** Binds uploaded, not-yet-sent attachments to a conversation and the user message they were sent with. */
+  linkAttachments(ids: string[], conversationId: string, messageId: string): Promise<number>;
+  /** Deletes an attachment that has not been sent yet. Sent ones go with their conversation. */
+  deleteAttachment(id: string): Promise<boolean>;
+  /** Removes uploads never sent with a message and older than `before`. */
+  deleteStaleUploads(before: Date): Promise<number>;
+  countAttachments(since: Date): Promise<number>;
 
   recordUsage(input: UsageInput): Promise<void>;
   countRequests(since: Date): Promise<number>;

@@ -1,9 +1,9 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowUp, BookmarkPlus, Check, Copy, Ellipsis, ImageIcon, Mic, Paperclip, RotateCcw, Square } from "lucide-react";
+import { ArrowUp, BookmarkPlus, Check, Copy, Ellipsis, FileText, ImageIcon, LoaderCircle, Mic, Paperclip, RotateCcw, Square, X } from "lucide-react";
 import type { Mode } from "@/core/types";
-import type { Conversation, Memory, Message } from "@/domain/types";
+import type { Attachment, Conversation, Memory, Message } from "@/domain/types";
 import { useApp } from "../app-context";
 import { api, ApiError, streamChat } from "../api-client";
 import { errorText } from "../i18n";
@@ -16,9 +16,41 @@ type UIMessage = Pick<Message, "id" | "role" | "content" | "provider" | "model" 
   streaming?: boolean;
   errorCode?: string;
   proposal?: Memory | null;
+  attachments?: Attachment[];
 };
 
 const MODES: Mode[] = ["air", "core", "prime"];
+const MAX_FILES = 3;
+const MAX_BYTES = 4 * 1024 * 1024;
+const ACCEPT = ".txt,.md,.markdown,.csv,.tsv,.log,.pdf,text/plain,text/markdown,text/csv,application/pdf";
+
+type PendingFile = { key: string; name: string; size: number; status: "uploading" | "ready"; attachment?: Attachment };
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function AttachmentChips({ items, onRemove, removeLabel }: { items: { key: string; name: string; size: number; loading?: boolean }[]; onRemove?: (key: string) => void; removeLabel?: string }) {
+  if (!items.length) return null;
+  return (
+    <div className="chips" data-testid="attachment-chips">
+      {items.map((a) => (
+        <span key={a.key} className="chip" title={a.name}>
+          {a.loading ? <LoaderCircle size={14} className="spin" aria-hidden /> : <FileText size={14} aria-hidden />}
+          <span className="chip-name">{a.name}</span>
+          <span className="chip-size">{formatSize(a.size)}</span>
+          {onRemove && (
+            <button type="button" className="chip-x" aria-label={`${removeLabel}: ${a.name}`} onClick={() => onRemove(a.key)} disabled={a.loading}>
+              <X size={13} />
+            </button>
+          )}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 export function ChatView({ conversationId, projectId, intro }: { conversationId: string | null; projectId?: string | null; intro?: React.ReactNode }) {
   const app = useApp();
@@ -42,12 +74,12 @@ export function ChatView({ conversationId, projectId, intro }: { conversationId:
   useEffect(() => {
     if (!conversationId) return;
     let cancelled = false;
-    api<Conversation & { messages: Message[] }>(`conversations/${conversationId}`)
+    api<Conversation & { messages: Message[]; attachments: Attachment[] }>(`conversations/${conversationId}`)
       .then((c) => {
         if (cancelled) return;
         setConversation(c);
         setMode(c.mode);
-        setMessages(c.messages);
+        setMessages(c.messages.map((m) => ({ ...m, attachments: c.attachments.filter((a) => a.messageId === m.id) })));
       })
       .catch((e) => {
         if (!cancelled && e instanceof ApiError && e.status === 404) setNotFound(true);
@@ -79,7 +111,7 @@ export function ChatView({ conversationId, projectId, intro }: { conversationId:
    * answers (`replaced`) are hidden and restored if no new answer could be produced.
    */
   const runStream = useCallback(
-    async (body: Record<string, unknown>, opts: { tmpUser?: UIMessage; replaced?: UIMessage[] }) => {
+    async (body: Record<string, unknown>, opts: { tmpUser?: UIMessage; replaced?: UIMessage[]; onRejected?: () => void }) => {
       setBanner(null);
       setBusy(true);
       stickToBottom.current = true;
@@ -99,7 +131,7 @@ export function ChatView({ conversationId, projectId, intro }: { conversationId:
             app.upsertConversation(ev.conversation);
             if (opts.tmpUser) {
               const tmpId = opts.tmpUser.id;
-              setMessages((list) => list.map((m) => (m.id === tmpId ? { ...ev.userMessage, proposal: ev.memoryProposal } : m)));
+              setMessages((list) => list.map((m) => (m.id === tmpId ? { ...ev.userMessage, proposal: ev.memoryProposal, attachments: ev.attachments } : m)));
             }
             if (!conversationId) window.history.replaceState(null, "", `/c/${ev.conversation.id}`);
           } else if (ev.type === "route") {
@@ -141,6 +173,7 @@ export function ChatView({ conversationId, projectId, intro }: { conversationId:
           setMessages((list) => list.filter((m) => m.id !== tmpId));
           setInput(opts.tmpUser.content);
         }
+        opts.onRejected?.();
         setBanner(errorText(locale, err.code));
       } finally {
         abortRef.current = null;
@@ -151,16 +184,69 @@ export function ChatView({ conversationId, projectId, intro }: { conversationId:
     [conversationId, locale, app, router],
   );
 
+  const [pending, setPending] = useState<PendingFile[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const uploading = pending.some((p) => p.status === "uploading");
+
+  const addFiles = useCallback(
+    async (files: FileList | File[]) => {
+      const list = Array.from(files);
+      const free = MAX_FILES - pending.length;
+      if (list.length > free) setBanner(errorText(locale, "too_many_files"));
+      for (const file of list.slice(0, Math.max(free, 0))) {
+        if (file.size > MAX_BYTES) {
+          setBanner(errorText(locale, "too_large"));
+          continue;
+        }
+        const key = `${file.name}-${file.size}-${Math.random().toString(36).slice(2)}`;
+        setPending((p) => [...p, { key, name: file.name, size: file.size, status: "uploading" }]);
+        try {
+          const form = new FormData();
+          form.append("file", file);
+          const res = await fetch("/api/attachments", { method: "POST", body: form, credentials: "same-origin" });
+          const data = (await res.json()) as Attachment & { error?: { code: string } };
+          if (!res.ok) throw new ApiError(res.status, data.error?.code ?? "generic");
+          setPending((p) => p.map((x) => (x.key === key ? { ...x, status: "ready", attachment: data } : x)));
+        } catch (e) {
+          setPending((p) => p.filter((x) => x.key !== key));
+          setBanner(errorText(locale, e instanceof ApiError ? e.code : "network"));
+        }
+      }
+    },
+    [pending.length, locale],
+  );
+
+  const removePending = useCallback((key: string) => {
+    setPending((p) => {
+      const item = p.find((x) => x.key === key);
+      if (item?.attachment) void api(`attachments/${item.attachment.id}`, { method: "DELETE" }).catch(() => undefined);
+      return p.filter((x) => x.key !== key);
+    });
+  }, []);
+
   const send = useCallback(
     async (text: string) => {
       const message = text.trim();
-      if (!message || busy) return;
+      if (!message || busy || uploading) return;
       setInput("");
       requestAnimationFrame(autosize);
-      const tmpUser: UIMessage = { id: `tmp-u-${Date.now()}`, role: "user", content: message, provider: null, model: null, status: "complete", createdAt: new Date().toISOString() };
-      await runStream({ conversationId: conversation?.id ?? null, projectId: conversation ? undefined : projectId ?? null, message, mode }, { tmpUser });
+      const sending = pending.filter((p) => p.attachment);
+      setPending([]);
+      const attachments = sending.map((p) => p.attachment!);
+      const tmpUser: UIMessage = { id: `tmp-u-${Date.now()}`, role: "user", content: message, provider: null, model: null, status: "complete", createdAt: new Date().toISOString(), attachments };
+      await runStream(
+        {
+          conversationId: conversation?.id ?? null,
+          projectId: conversation ? undefined : projectId ?? null,
+          message,
+          mode,
+          ...(attachments.length ? { attachmentIds: attachments.map((a) => a.id) } : {}),
+        },
+        { tmpUser, onRejected: () => setPending(sending) },
+      );
     },
-    [busy, conversation, projectId, mode, runStream],
+    [busy, uploading, pending, conversation, projectId, mode, runStream],
   );
 
   /** New answer for the last user message, replacing the answer(s) after it — no duplicate user message. */
@@ -304,6 +390,7 @@ export function ChatView({ conversationId, projectId, intro }: { conversationId:
           {messages.map((m) =>
             m.role === "user" ? (
               <div key={m.id} className="msg-user" data-testid="msg-user">
+                <AttachmentChips items={(m.attachments ?? []).map((a) => ({ key: a.id, name: a.name, size: a.size }))} />
                 <div className="bubble">{m.content}</div>
                 <div className="msg-meta inline" style={{ justifyContent: "flex-end" }}>
                   {!m.id.startsWith("tmp") && !m.proposal && (
@@ -343,14 +430,52 @@ export function ChatView({ conversationId, projectId, intro }: { conversationId:
       </div>
 
       <div className="composer-wrap">
+        <div className="composer-box">
+        <AttachmentChips
+          items={pending.map((p) => ({ key: p.key, name: p.name, size: p.size, loading: p.status === "uploading" }))}
+          onRemove={removePending}
+          removeLabel={t("chat.removeAttachment")}
+        />
         <form
-          className="composer"
+          className={`composer${dragging ? " dragging" : ""}`}
           onSubmit={(e) => {
             e.preventDefault();
             void send(input);
           }}
+          onDragOver={(e) => {
+            if (e.dataTransfer.types.includes("Files")) {
+              e.preventDefault();
+              setDragging(true);
+            }
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => {
+            if (!e.dataTransfer.files.length) return;
+            e.preventDefault();
+            setDragging(false);
+            void addFiles(e.dataTransfer.files);
+          }}
         >
-          <button type="button" className="icon-btn" disabled title={`${t("soon")}: ${t("soon.attach")}`} aria-label={`${t("soon")}: ${t("soon.attach")}`}>
+          <input
+            ref={fileRef}
+            type="file"
+            accept={ACCEPT}
+            multiple
+            hidden
+            data-testid="file-input"
+            onChange={(e) => {
+              if (e.target.files) void addFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={() => fileRef.current?.click()}
+            disabled={busy || pending.length >= MAX_FILES}
+            title={t("chat.attachHint")}
+            aria-label={t("chat.attach")}
+          >
             <Paperclip size={19} />
           </button>
           <label className="sr-only" htmlFor="composer-input">{t("chat.placeholder")}</label>
@@ -379,11 +504,12 @@ export function ChatView({ conversationId, projectId, intro }: { conversationId:
               <Square size={14} fill="currentColor" />
             </button>
           ) : (
-            <button type="submit" className="send-btn" disabled={!input.trim()} aria-label={t("chat.send")} data-testid="send">
+            <button type="submit" className="send-btn" disabled={!input.trim() || uploading} aria-label={t("chat.send")} data-testid="send">
               <ArrowUp size={20} />
             </button>
           )}
         </form>
+        </div>
         <div className="composer-foot">
           <label className="inline">
             <span>{t("chat.mode")}</span>

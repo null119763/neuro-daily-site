@@ -71,6 +71,25 @@ export interface Memory {
   updatedAt: string;
 }
 
+/** Uploaded document. Only extracted text is stored (no original file). */
+export interface Attachment {
+  id: string;
+  userId: string;
+  conversationId: string | null;
+  /** The user message it was sent with; null while it is only uploaded. */
+  messageId: string | null;
+  name: string;
+  mime: "text/plain" | "text/markdown" | "application/pdf";
+  size: number;
+  chars: number;
+  truncated: boolean;
+  createdAt: string;
+}
+
+export interface AttachmentWithContent extends Attachment {
+  content: string;
+}
+
 export interface UsageEvent {
   id: string;
   userId: string;
@@ -89,5 +108,6 @@ export interface UserExport {
   projects: Project[];
   conversations: (Conversation & { messages: Message[] })[];
   memories: Memory[];
+  attachments: AttachmentWithContent[];
   usage: UsageEvent[];
 }
