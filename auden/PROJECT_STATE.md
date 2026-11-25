@@ -1,20 +1,35 @@
 # PROJECT_STATE — Auden
 
-> Этот файл — точка входа для новой сессии разработки. Читать первым, затем `TASKS.md`, `docs/DECISIONS.md`.
+> Точка входа для новой сессии. Читать первым, затем `TASKS.md` и `docs/DECISIONS.md`.
 
-**Обновлено:** 2026-11-25 · **Ветка:** `claude/auden-platform-setup-fjnfvx` · **Версия:** Alpha 0.1 (в разработке)
+**Обновлено:** 2026-11-25 · **Ветка:** `claude/auden-platform-setup-fjnfvx` · **Версия:** Alpha 0.1 (рабочий прототип)
 
 ## Где что лежит
-- Код приложения: `auden/` (корень репозитория — чужой статический сайт NEURO DAILY, не трогать).
-- Требования: `auden/docs/spec/`, макеты: `auden/docs/design/`, план: `auden/docs/PLAN.md`.
+- Приложение: `auden/` (корень репозитория — статический сайт NEURO DAILY, не трогать).
+- Требования: `auden/docs/spec/`, макеты: `auden/docs/design/`, план: `auden/docs/PLAN.md`, решения: `auden/docs/DECISIONS.md`.
+- CI: `.github/workflows/auden-ci.yml` (в корне репозитория).
 
-## Текущее состояние
-- Этап 0 (документация) завершён. Следующий шаг — этап 1 (scaffold).
+## Что работает (проверено тестами)
+- Регистрация/вход (local‑бэкенд), чат со streaming и отменой, история после перезагрузки, поиск, избранное, проекты с инструкциями, память с подтверждением, персонализация, темы, RU/EN, экспорт и удаление аккаунта, серверные квоты.
+- Ответы — **mock‑провайдер**, пока не задан `OPENROUTER_API_KEY` (UI это явно показывает).
+- Тесты: 44 unit/integration (`npm test`), RLS (`npm run test:rls`), 14 e2e (`npm run build && npm run test:e2e`). Всё зелёное на момент записи.
+
+## Что НЕ проверено
+- Supabase‑адаптер против живого проекта (нужен проект владельца).
+- Реальные ответы OpenRouter (нужен ключ владельца).
+- CI в GitHub (push не прошёл: 403, нет доступа Claude GitHub App).
+
+## Следующие шаги
+1. Владелец: подключить доступ GitHub → `git push -u origin claude/auden-platform-setup-fjnfvx`.
+2. Владелец: решения P1–P5 в `docs/DECISIONS.md` (хостинг, Supabase, ключ OpenRouter, репозиторий, юридическое).
+3. С ключом OpenRouter: проверить streaming на реальной модели, зафиксировать `AUDEN_MODELS_*`.
+4. С Supabase: применить миграцию, прогнать e2e с `AUDEN_BACKEND=supabase`, добавить e2e‑конфиг для него.
+5. Затем: вложения текст/PDF, rate limit входа, список приглашений для закрытой альфы.
 
 ## Как продолжить
-1. `cd auden && npm ci`
-2. Прочитать `TASKS.md`, взять первую незакрытую задачу.
-3. После каждого модуля: тесты → запись в `DEVELOPMENT_LOG.md` → отметка в `TASKS.md` → коммит.
-
-## Открытые вопросы к владельцу
-См. `docs/DECISIONS.md` → «Ожидают подтверждения» (P1–P6).
+```bash
+cd auden && npm ci
+npm run check && npm run test:rls
+npm run build && npm run test:e2e
+npm run dev
+```
