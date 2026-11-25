@@ -50,6 +50,11 @@ update public.app_config set value = 'allowlist' where key = 'signup_mode';
 insert into public.signup_allowlist (entry) values ('friend@example.com'), ('@mycompany.com');
 ```
 
+### Метрики альфы
+
+Страница `/admin` доступна только администраторам: локально — `AUDEN_ADMIN_EMAILS=you@example.com`; в Supabase —
+`insert into public.admins (user_id) select id from auth.users where email = 'you@example.com';`
+
 ## Команды
 
 | Команда | Что делает |
