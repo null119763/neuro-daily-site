@@ -7,7 +7,7 @@ import { api, ApiError } from "../api-client";
 import { translate, type DictKey } from "../i18n";
 import { Hills, LogoMark } from "./Logo";
 
-export function LoginForm({ locale: initialLocale, backend, signupsOpen }: { locale: Locale; backend: "local" | "supabase"; signupsOpen: boolean }) {
+export function LoginForm({ locale: initialLocale, backend, signupMode }: { locale: Locale; backend: "local" | "supabase"; signupMode: "open" | "allowlist" | "closed" }) {
   const router = useRouter();
   const [locale, setLocale] = useState<Locale>(initialLocale);
   const t = (k: DictKey) => translate(locale, k);
@@ -50,6 +50,10 @@ export function LoginForm({ locale: initialLocale, backend, signupsOpen }: { loc
       router.refresh();
     } catch (err) {
       const code = err instanceof ApiError ? err.code : "generic";
+      if (err instanceof ApiError && err.code === "too_many_attempts") {
+        setError(`${t("auth.err.too_many_attempts")} ${Math.ceil((err.retryAfterSec ?? 60) / 60)} ${t("auth.minutes")}`);
+        return;
+      }
       const key = `auth.err.${code}` as DictKey;
       setError(translate(locale, key) !== key ? translate(locale, key) : t("auth.err.generic"));
     } finally {
@@ -96,7 +100,7 @@ export function LoginForm({ locale: initialLocale, backend, signupsOpen }: { loc
           </div>
           <div className="segmented" style={{ width: "100%", marginBottom: 20 }} role="group">
             <button type="button" style={{ flex: 1 }} aria-pressed={mode === "signin"} onClick={() => setMode("signin")}>{t("auth.signIn")}</button>
-            <button type="button" style={{ flex: 1 }} aria-pressed={mode === "signup"} onClick={() => setMode("signup")} disabled={!signupsOpen}>{t("auth.signUp")}</button>
+            <button type="button" style={{ flex: 1 }} aria-pressed={mode === "signup"} onClick={() => setMode("signup")} disabled={signupMode === "closed"}>{t("auth.signUp")}</button>
           </div>
           <form onSubmit={submit} noValidate>
             {mode === "signup" && (
@@ -136,6 +140,7 @@ export function LoginForm({ locale: initialLocale, backend, signupsOpen }: { loc
               {mode === "signup" ? t("auth.signUp") : t("auth.signIn")}
             </button>
           </form>
+          {mode === "signup" && signupMode === "allowlist" && <p className="small muted" style={{ marginTop: 16, textAlign: "center" }}>{t("auth.allowlistNote")}</p>}
           {backend === "local" && <p className="small muted" style={{ marginTop: 16, textAlign: "center" }}>{t("auth.localMode")}</p>}
           <div className="inline" style={{ justifyContent: "center", marginTop: 12 }}>
             <button className="tab" aria-pressed={locale === "ru"} onClick={() => switchLocale("ru")}>Русский</button>

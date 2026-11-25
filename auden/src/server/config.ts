@@ -15,7 +15,28 @@ export interface AppConfig {
   maxInputChars: number;
   maxContextTokens: number;
   maxOutputTokens: number;
-  signupsOpen: boolean;
+  /** open: anyone; allowlist: only AUDEN_ALLOWED_EMAILS (closed alpha); closed: no sign-ups. */
+  signupMode: "open" | "allowlist" | "closed";
+  /** Lowercased emails, or "@domain.com" entries for whole domains. */
+  allowedEmails: string[];
+  /** Trust X-Forwarded-For from the hosting proxy for per-IP auth limits. */
+  trustProxy: boolean;
+  auth: { failedPerEmail: number; failedPerIp: number; signupsPerIpHour: number };
+}
+
+export function isEmailAllowed(email: string, cfg: Pick<AppConfig, "signupMode" | "allowedEmails">): boolean {
+  if (cfg.signupMode === "open") return true;
+  if (cfg.signupMode === "closed") return false;
+  const e = email.trim().toLowerCase();
+  const domain = e.slice(e.lastIndexOf("@"));
+  return cfg.allowedEmails.includes(e) || cfg.allowedEmails.includes(domain);
+}
+
+function signupMode(env: NodeJS.ProcessEnv): AppConfig["signupMode"] {
+  const m = env.AUDEN_SIGNUP_MODE?.trim().toLowerCase();
+  if (m === "open" || m === "allowlist" || m === "closed") return m;
+  // Backward compatibility with AUDEN_SIGNUPS_OPEN=false
+  return env.AUDEN_SIGNUPS_OPEN === "false" ? "closed" : "open";
 }
 
 function int(name: string, fallback: number, env: NodeJS.ProcessEnv): number {
@@ -56,6 +77,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     maxInputChars: int("AUDEN_MAX_INPUT_CHARS", 8000, env),
     maxContextTokens: int("AUDEN_MAX_CONTEXT_TOKENS", 6000, env),
     maxOutputTokens: int("AUDEN_MAX_OUTPUT_TOKENS", 1500, env),
-    signupsOpen: env.AUDEN_SIGNUPS_OPEN !== "false",
+    signupMode: signupMode(env),
+    allowedEmails: (env.AUDEN_ALLOWED_EMAILS ?? "")
+      .split(",")
+      .map((x) => x.trim().toLowerCase())
+      .filter(Boolean),
+    trustProxy: env.AUDEN_TRUST_PROXY !== "false",
+    auth: {
+      failedPerEmail: int("AUDEN_AUTH_FAILS_PER_EMAIL", 5, env),
+      failedPerIp: int("AUDEN_AUTH_FAILS_PER_IP", 30, env),
+      signupsPerIpHour: int("AUDEN_SIGNUPS_PER_IP_HOUR", 5, env),
+    },
   };
 }

@@ -5,7 +5,7 @@ import { LocalDatabase } from "@/persistence/local-db";
 import { LocalGlobalUsage, LocalUserStore } from "@/persistence/local-store";
 import type { GlobalUsage, UserStore } from "@/persistence/store";
 import { SupabaseGlobalUsage, SupabaseUserStore } from "@/persistence/supabase-store";
-import type { AppConfig } from "./config";
+import { isEmailAllowed, type AppConfig } from "./config";
 
 export interface CookieOptions {
   httpOnly?: boolean;
@@ -29,7 +29,16 @@ export interface Session {
   global: GlobalUsage;
 }
 
-export type AuthResult = { ok: true; needsEmailConfirmation?: boolean } | { ok: false; code: "email_taken" | "invalid_credentials" | "signups_closed" | "auth_error"; message?: string };
+export type AuthResult =
+  | { ok: true; needsEmailConfirmation?: boolean }
+  | { ok: false; code: "email_taken" | "invalid_credentials" | "signups_closed" | "not_invited" | "auth_error"; message?: string };
+
+/** Shared sign-up gate. The Supabase database enforces the same rule with a trigger (see migrations). */
+export function signupGate(cfg: Pick<AppConfig, "signupMode" | "allowedEmails">, email: string): AuthResult | null {
+  if (cfg.signupMode === "closed") return { ok: false, code: "signups_closed" };
+  if (!isEmailAllowed(email, cfg)) return { ok: false, code: "not_invited" };
+  return null;
+}
 
 export interface Backend {
   readonly kind: "local" | "supabase";
@@ -48,7 +57,7 @@ export class LocalBackend implements Backend {
   private readonly global: LocalGlobalUsage;
 
   constructor(
-    private readonly cfg: Pick<AppConfig, "localDataFile" | "signupsOpen">,
+    private readonly cfg: Pick<AppConfig, "localDataFile" | "signupMode" | "allowedEmails">,
     db?: LocalDatabase,
     private readonly secureCookies = process.env.NODE_ENV === "production",
   ) {
@@ -62,7 +71,8 @@ export class LocalBackend implements Backend {
   }
 
   async signUp(jar: CookieJar, input: { email: string; password: string; displayName: string | null }): Promise<AuthResult> {
-    if (!this.cfg.signupsOpen) return { ok: false, code: "signups_closed" };
+    const gate = signupGate(this.cfg, input.email);
+    if (gate) return gate;
     try {
       const { token } = await this.auth.signUp(input.email, input.password, input.displayName);
       this.setSession(jar, token);
@@ -124,13 +134,17 @@ export class SupabaseBackend implements Backend {
   }
 
   async signUp(jar: CookieJar, input: { email: string; password: string; displayName: string | null }): Promise<AuthResult> {
-    if (!this.cfg.signupsOpen) return { ok: false, code: "signups_closed" };
+    const gate = signupGate(this.cfg, input.email);
+    if (gate) return gate;
     const { data, error } = await this.client(jar).auth.signUp({
       email: input.email,
       password: input.password,
       options: { data: { display_name: input.displayName ?? "" } },
     });
-    if (error) return { ok: false, code: /registered|exists/i.test(error.message) ? "email_taken" : "auth_error", message: error.message };
+    if (error) {
+      const code = /registered|exists/i.test(error.message) ? "email_taken" : /not_invited/i.test(error.message) ? "not_invited" : "auth_error";
+      return { ok: false, code, message: error.message };
+    }
     return { ok: true, needsEmailConfirmation: !data.session };
   }
 

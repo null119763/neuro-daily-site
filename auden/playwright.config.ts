@@ -23,6 +23,7 @@ export default defineConfig({
       AUDEN_USER_PER_MINUTE: "100",
       AUDEN_USER_DAILY_MESSAGES: "500",
       AUDEN_GLOBAL_DAILY_REQUESTS: "5000",
+      AUDEN_SIGNUPS_PER_IP_HOUR: "1000",
       NEXT_TELEMETRY_DISABLED: "1",
     },
   },

@@ -102,8 +102,41 @@ describe("auth", () => {
     expect((await c.json("POST", "auth/signup", { email: "x@test.dev", password: "long enough", acceptTerms: false })).status).toBe(400);
   });
 
+  it("allows only invited emails in allowlist mode", async () => {
+    const alpha = makeRuntime({ AUDEN_SIGNUP_MODE: "allowlist", AUDEN_ALLOWED_EMAILS: "vip@test.dev,@team.dev" });
+    expect((await new Client(alpha.rt).signUp("stranger@test.dev")).status).toBe(403);
+    const r = await new Client(alpha.rt).signUp("stranger@test.dev");
+    expect(r.data.error.code).toBe("not_invited");
+    expect((await new Client(alpha.rt).signUp("vip@test.dev")).status).toBe(201);
+    expect((await new Client(alpha.rt).signUp("dev@team.dev")).status).toBe(201);
+    const s = await new Client(alpha.rt).json("GET", "auth/session");
+    expect(s.data.signupMode).toBe("allowlist");
+  });
+
+  it("locks sign-in after repeated wrong passwords, without blocking other accounts", async () => {
+    const anon = new Client(rt);
+    for (let i = 0; i < 5; i++) {
+      expect((await anon.json("POST", "auth/signin", { email: "alice@test.dev", password: "wrong password" })).status).toBe(401);
+    }
+    const locked = await anon.call("POST", "auth/signin", { email: "alice@test.dev", password: "correct horse" });
+    expect(locked.status).toBe(429);
+    expect(Number(locked.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect((await locked.json()).error.code).toBe("too_many_attempts");
+    expect((await anon.json("POST", "auth/signin", { email: "bob@test.dev", password: "correct horse" })).status).toBe(200);
+  });
+
+  it("limits sign-ups per IP", async () => {
+    const fresh = makeRuntime();
+    const statuses: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const res = await new Client(fresh.rt).call("POST", "auth/signup", { email: `u${i}@test.dev`, password: "correct horse", acceptTerms: true }, { "x-forwarded-for": "198.51.100.7" });
+      statuses.push(res.status);
+    }
+    expect(statuses).toEqual([201, 201, 201, 201, 201, 429]);
+  });
+
   it("can close sign-ups", async () => {
-    const closed = makeRuntime({ AUDEN_SIGNUPS_OPEN: "false" });
+    const closed = makeRuntime({ AUDEN_SIGNUP_MODE: "closed" });
     expect((await new Client(closed.rt).signUp("c@test.dev")).status).toBe(403);
   });
 });
