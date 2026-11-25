@@ -1,0 +1,32 @@
+# Render Blueprint for an Auden TEST instance (free plan).
+# Free web services sleep after ~15 min idle and have an ephemeral disk:
+# with AUDEN_BACKEND=local all accounts and chats are wiped on every restart/redeploy.
+# For persistent data switch to AUDEN_BACKEND=supabase (see auden/README.md).
+services:
+  - type: web
+    name: auden-test
+    runtime: node
+    plan: free
+    region: frankfurt
+    rootDir: auden
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /login
+    autoDeploy: false
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"
+      - key: AUDEN_BACKEND
+        value: local
+      # Closed test: only these emails can register (comma-separated, or @domain).
+      - key: AUDEN_SIGNUP_MODE
+        value: allowlist
+      - key: AUDEN_ALLOWED_EMAILS
+        sync: false
+      - key: AUDEN_ADMIN_EMAILS
+        sync: false
+      # Optional now; add later to get real answers instead of the demo provider.
+      - key: OPENROUTER_API_KEY
+        sync: false

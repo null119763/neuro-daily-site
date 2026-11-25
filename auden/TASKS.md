@@ -50,12 +50,12 @@
 
 ## Этап 6. CI
 - [x] GitHub Actions: lint, typecheck, unit/integration, RLS, build, e2e (`.github/workflows/auden-ci.yml`)
-- [!] Не запускался: push в GitHub заблокирован (нет доступа Claude GitHub App)
+- [x] CI зелёный на PR #1–#4, всё слито в `main`
 
 ## Этап 7. Закрытая альфа (блокировано решениями)
 - [!] Supabase‑проект (P2) → прогнать e2e против Supabase
 - [!] Ключ OpenRouter (P3) → проверить реальный streaming и выбрать модели для режимов
-- [!] Хостинг (P1) → проверить SSE и таймауты функций
+- [~] Тестовый хостинг: `render.yaml` (Render free, local‑бэкенд, только allowlist). Продакшен‑хостинг — решение P1
 - [!] Политика конфиденциальности / условия (P5) → заменить ссылку‑черновик в форме регистрации
 - [x] Закрытая альфа: `AUDEN_SIGNUP_MODE=allowlist` + `AUDEN_ALLOWED_EMAILS`; в Supabase — триггер на `auth.users` с `signup_allowlist`
 
