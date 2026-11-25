@@ -55,6 +55,17 @@ insert into public.signup_allowlist (entry) values ('friend@example.com'), ('@my
 Страница `/admin` доступна только администраторам: локально — `AUDEN_ADMIN_EMAILS=you@example.com`; в Supabase —
 `insert into public.admins (user_id) select id from auth.users where email = 'you@example.com';`
 
+### Тестовый запуск на Render (бесплатно)
+
+В корне репозитория есть `render.yaml`. В Render: **New → Blueprint →** этот репозиторий. При создании укажите:
+- `AUDEN_ALLOWED_EMAILS` — email, которым разрешена регистрация (обязательно, иначе зарегистрироваться не сможет никто);
+- `AUDEN_ADMIN_EMAILS` — ваш email для страницы метрик;
+- `OPENROUTER_API_KEY` — можно оставить пустым (будет демо‑режим).
+
+Ограничения бесплатного плана: сервис засыпает после ~15 минут простоя (первое открытие ~1 минута), диск временный — **аккаунты и чаты стираются при перезапуске**. Для постоянных данных нужен Supabase.
+
+На iPhone: откройте адрес в Safari → «Поделиться» → «На экран „Домой“» — Auden появится как приложение с иконкой.
+
 ## Команды
 
 | Команда | Что делает |
