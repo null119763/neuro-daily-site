@@ -121,11 +121,14 @@ export async function prepareChat(session: Session, engine: AudenEngine, cfg: Ap
       if (regen) for (const m of regen.drop) await store.deleteMessage(m.id);
     };
     let routed: { provider: string; model: string } | null = null;
+    const startedAt = Date.now();
+    let ttftMs: number | null = null;
     for await (const ev of engine.run({ mode, messages, signal, maxOutputTokens: cfg.maxOutputTokens })) {
       if (ev.type === "route") {
         routed = { provider: ev.provider, model: ev.model };
         yield { type: "route", provider: ev.provider, model: ev.model };
       } else if (ev.type === "delta") {
+        if (ttftMs === null) ttftMs = Date.now() - startedAt;
         yield { type: "delta", text: ev.text };
       } else if (ev.type === "done") {
         await dropReplaced();
@@ -138,7 +141,18 @@ export async function prepareChat(session: Session, engine: AudenEngine, cfg: Ap
           inputTokens: ev.inputTokens,
           outputTokens: ev.outputTokens,
         }))!;
-        await store.recordUsage({ provider: ev.provider, model: ev.model, inputTokens: ev.inputTokens, outputTokens: ev.outputTokens, cost: ev.costUsd, status: "complete" });
+        await store.recordUsage({
+          provider: ev.provider,
+          model: ev.model,
+          inputTokens: ev.inputTokens,
+          outputTokens: ev.outputTokens,
+          cost: ev.costUsd,
+          status: "complete",
+          mode,
+          ttftMs,
+          latencyMs: Date.now() - startedAt,
+          errorCode: null,
+        });
         yield { type: "done", message };
       } else {
         const status = ev.code === "cancelled" ? "cancelled" : "error";
@@ -157,7 +171,18 @@ export async function prepareChat(session: Session, engine: AudenEngine, cfg: Ap
         }
         // Count every request that reached a provider, so failures cannot be used to bypass quotas.
         if (routed) {
-          await store.recordUsage({ provider: routed.provider, model: routed.model, inputTokens: ev.inputTokens, outputTokens: ev.outputTokens, cost: 0, status });
+          await store.recordUsage({
+            provider: routed.provider,
+            model: routed.model,
+            inputTokens: ev.inputTokens,
+            outputTokens: ev.outputTokens,
+            cost: 0,
+            status,
+            mode,
+            ttftMs,
+            latencyMs: Date.now() - startedAt,
+            errorCode: ev.code,
+          });
         }
         yield { type: "error", code: ev.code, message: ev.message, saved };
       }

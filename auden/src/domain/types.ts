@@ -99,6 +99,21 @@ export interface UsageEvent {
   outputTokens: number;
   cost: number;
   status: MessageStatus;
+  /** Mode the request was made in (Air/Core/Prime). */
+  mode: Mode | null;
+  /** Milliseconds from request start to the first streamed token (null if none arrived). */
+  ttftMs: number | null;
+  /** Milliseconds from request start to the end of the answer or failure. */
+  latencyMs: number | null;
+  errorCode: string | null;
+  createdAt: string;
+}
+
+/** User rating of an assistant answer: 1 = helpful, -1 = not helpful. */
+export interface MessageFeedback {
+  messageId: string;
+  userId: string;
+  rating: 1 | -1;
   createdAt: string;
 }
 
@@ -109,5 +124,6 @@ export interface UserExport {
   conversations: (Conversation & { messages: Message[] })[];
   memories: Memory[];
   attachments: AttachmentWithContent[];
+  feedback: MessageFeedback[];
   usage: UsageEvent[];
 }

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Attachment, AttachmentWithContent, Conversation, Memory, Message, Profile, Project, UsageEvent } from "@/domain/types";
+import type { Attachment, AttachmentWithContent, Conversation, Memory, Message, MessageFeedback, Profile, Project, UsageEvent } from "@/domain/types";
 import type { LocalData, LocalDatabase } from "./local-db";
 import type {
   AttachmentInput,
@@ -147,6 +147,8 @@ export class LocalUserStore implements UserStore {
       d.conversations.splice(i, 1);
       d.messages = d.messages.filter((m) => m.conversationId !== id);
       d.attachments = d.attachments.filter((a) => a.conversationId !== id);
+      const alive = new Set(d.messages.map((m) => m.id));
+      d.feedback = d.feedback.filter((f) => alive.has(f.messageId));
       for (const m of d.memories) if (m.sourceConversationId === id) m.sourceConversationId = null;
       return true;
     });
@@ -187,6 +189,7 @@ export class LocalUserStore implements UserStore {
       const i = d.messages.findIndex((m) => m.id === id && m.userId === this.userId);
       if (i < 0) return false;
       d.messages.splice(i, 1);
+      d.feedback = d.feedback.filter((f) => f.messageId !== id);
       return true;
     });
   }
@@ -299,6 +302,23 @@ export class LocalUserStore implements UserStore {
     return (await this.d()).attachments.filter((a) => a.userId === this.userId && a.createdAt >= s).length;
   }
 
+  // ---- feedback
+  async setFeedback(messageId: string, rating: 1 | -1 | null): Promise<boolean> {
+    return this.db.mutate((d) => {
+      const msg = d.messages.find((m) => m.id === messageId && m.userId === this.userId && m.role === "assistant");
+      if (!msg) return false;
+      d.feedback = d.feedback.filter((f) => !(f.messageId === messageId && f.userId === this.userId));
+      if (rating !== null) d.feedback.push({ messageId, userId: this.userId, rating, createdAt: nowIso() });
+      return true;
+    });
+  }
+
+  async listFeedback(conversationId: string): Promise<MessageFeedback[]> {
+    const d = await this.d();
+    const ids = new Set(d.messages.filter((m) => m.conversationId === conversationId && m.userId === this.userId).map((m) => m.id));
+    return clone(d.feedback.filter((f) => f.userId === this.userId && ids.has(f.messageId)));
+  }
+
   // ---- usage
   async recordUsage(input: UsageInput): Promise<void> {
     const e: UsageEvent = { id: randomUUID(), userId: this.userId, createdAt: nowIso(), ...input };
@@ -328,6 +348,7 @@ export class LocalUserStore implements UserStore {
       conversations,
       memories: d.memories.filter((m) => m.userId === this.userId),
       attachments: d.attachments.filter((a) => a.userId === this.userId),
+      feedback: d.feedback.filter((f) => f.userId === this.userId),
       usage: d.usage.filter((u) => u.userId === this.userId),
     });
   }
@@ -343,6 +364,7 @@ export class LocalUserStore implements UserStore {
       d.messages = d.messages.filter((m) => m.userId !== uid);
       d.memories = d.memories.filter((m) => m.userId !== uid);
       d.attachments = d.attachments.filter((a) => a.userId !== uid);
+      d.feedback = d.feedback.filter((f) => f.userId !== uid);
       // Usage rows are kept anonymised for global quota/accounting integrity until the day rolls over.
       for (const u of d.usage) if (u.userId === uid) u.userId = "deleted";
     });

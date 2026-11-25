@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Attachment, AttachmentWithContent, Conversation, Memory, Message, Profile, Project, UsageEvent, UserExport } from "@/domain/types";
+import type { Attachment, AttachmentWithContent, Conversation, Memory, Message, MessageFeedback, Profile, Project, UsageEvent, UserExport } from "@/domain/types";
 import type {
   AttachmentInput,
   ConversationFilter,
@@ -97,8 +97,13 @@ const toUsage = (r: Row): UsageEvent => ({
   outputTokens: r.output_tokens,
   cost: Number(r.cost),
   status: r.status,
+  mode: r.mode ?? null,
+  ttftMs: r.ttft_ms ?? null,
+  latencyMs: r.latency_ms ?? null,
+  errorCode: r.error_code ?? null,
   createdAt: r.created_at,
 });
+const toFeedback = (r: Row): MessageFeedback => ({ messageId: r.message_id, userId: r.user_id, rating: r.rating, createdAt: r.created_at });
 
 function check<T>(res: { data: T; error: { message: string; code?: string } | null }): T {
   if (res.error) throw new Error(`Database error: ${res.error.message}`);
@@ -326,6 +331,24 @@ export class SupabaseUserStore implements UserStore {
     return res.count ?? 0;
   }
 
+  async setFeedback(messageId: string, rating: 1 | -1 | null): Promise<boolean> {
+    const msg = check(await this.sb.from("messages").select("id").eq("id", messageId).eq("user_id", this.userId).eq("role", "assistant").maybeSingle());
+    if (!msg) return false;
+    if (rating === null) {
+      check(await this.sb.from("message_feedback").delete().eq("message_id", messageId).eq("user_id", this.userId));
+    } else {
+      check(await this.sb.from("message_feedback").upsert({ message_id: messageId, user_id: this.userId, rating }, { onConflict: "message_id,user_id" }));
+    }
+    return true;
+  }
+
+  async listFeedback(conversationId: string): Promise<MessageFeedback[]> {
+    const rows = check(
+      await this.sb.from("message_feedback").select("message_id,user_id,rating,created_at,messages!inner(conversation_id)").eq("user_id", this.userId).eq("messages.conversation_id", conversationId),
+    ) as Row[];
+    return rows.map(toFeedback);
+  }
+
   async recordUsage(i: UsageInput): Promise<void> {
     check(
       await this.sb.from("usage_events").insert({
@@ -336,6 +359,10 @@ export class SupabaseUserStore implements UserStore {
         output_tokens: i.outputTokens,
         cost: i.cost,
         status: i.status,
+        mode: i.mode,
+        ttft_ms: i.ttftMs,
+        latency_ms: i.latencyMs,
+        error_code: i.errorCode,
       }),
     );
   }
@@ -354,16 +381,18 @@ export class SupabaseUserStore implements UserStore {
 
   async exportAll(): Promise<UserExport> {
     const attachmentsQuery = this.sb.from("attachments").select("*").eq("user_id", this.userId).order("created_at");
-    const [profile, projects, conversations, memories, usage, attachmentRows] = await Promise.all([
+    const feedbackQuery = this.sb.from("message_feedback").select("*").eq("user_id", this.userId);
+    const [profile, projects, conversations, memories, usage, attachmentRows, feedbackRows] = await Promise.all([
       this.getProfile(),
       this.listProjects({ includeArchived: true }),
       this.listConversations({ limit: 10_000 }),
       this.listMemories(),
       this.listUsage(new Date(0)),
       attachmentsQuery.then((r) => check(r) as Row[]),
+      feedbackQuery.then((r) => check(r) as Row[]),
     ]);
     const withMessages = await Promise.all(conversations.map(async (c) => ({ ...c, messages: await this.listMessages(c.id) })));
-    return { exportedAt: now(), profile, projects, conversations: withMessages, memories, attachments: attachmentRows.map(toAttachmentWithContent), usage };
+    return { exportedAt: now(), profile, projects, conversations: withMessages, memories, attachments: attachmentRows.map(toAttachmentWithContent), feedback: feedbackRows.map(toFeedback), usage };
   }
 
   async deleteAccount(): Promise<void> {

@@ -2,20 +2,21 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
-import { Brain, Home, Layers, LogOut, Menu, MessageCircle, Plus, Settings, X } from "lucide-react";
+import { BarChart3, Brain, Home, Layers, LogOut, Menu, MessageCircle, Plus, Settings, X } from "lucide-react";
 import { useApp } from "../app-context";
 import { api } from "../api-client";
 import { ConversationList } from "./ConversationList";
 import { LogoMark } from "./Logo";
 
 function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
-  const { t } = useApp();
+  const { t, isAdmin } = useApp();
   const path = usePathname();
   const items = [
     { href: "/", label: t("nav.home"), icon: Home },
     { href: "/projects", label: t("nav.projects"), icon: Layers },
     { href: "/memory", label: t("nav.memory"), icon: Brain },
     { href: "/settings", label: t("nav.settings"), icon: Settings },
+    ...(isAdmin ? [{ href: "/admin", label: t("nav.metrics"), icon: BarChart3 }] : []),
   ];
   return (
     <nav aria-label="Main" className="stack" style={{ gap: 2 }}>
