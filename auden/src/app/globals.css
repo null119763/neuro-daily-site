@@ -113,6 +113,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 }
 .icon-btn:hover { background: var(--surface); color: var(--text); }
 .icon-btn:disabled { opacity: .45; cursor: not-allowed; }
+.icon-btn.active { color: var(--accent); background: var(--accent-soft); }
 .field { display: grid; gap: 6px; margin-bottom: 16px; }
 .field label { font-size: 14px; color: var(--text-2); }
 .input, .textarea, .select {
@@ -293,6 +294,19 @@ a.row:hover, button.row:hover { background: var(--surface); cursor: pointer; }
 .segmented { display: inline-flex; padding: 3px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); flex-wrap: wrap; }
 .segmented button { border: 0; background: transparent; padding: 6px 14px; border-radius: 9px; cursor: pointer; font-size: 14px; color: var(--text-2); }
 .segmented button[aria-pressed="true"] { background: var(--surface-2); color: var(--text); box-shadow: var(--shadow); }
+
+/* ---------- metrics */
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-bottom: 24px; }
+.kpi { padding: 14px 16px; }
+.kpi .label { font-size: 12.5px; color: var(--text-3); }
+.kpi .value { font-family: var(--font-serif); font-size: 26px; line-height: 1.2; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.kpi .sub { font-size: 12px; color: var(--text-3); }
+.table-wrap { overflow-x: auto; }
+.table { width: 100%; border-collapse: collapse; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.table th, .table td { text-align: right; padding: 8px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.table th:first-child, .table td:first-child { text-align: left; }
+.table th { font-weight: 500; color: var(--text-3); font-size: 12.5px; }
+.table tr:last-child td { border-bottom: 0; }
 
 /* ---------- auth */
 .auth { min-height: 100dvh; display: grid; grid-template-columns: 1.1fr 1fr; }

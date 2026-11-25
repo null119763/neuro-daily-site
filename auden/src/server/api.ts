@@ -20,6 +20,8 @@ import { assertSameOrigin, errorJson, HttpError, json, readJson, RequestCookieJa
 import type { Runtime } from "./runtime";
 import { clientIp } from "./rate-limit";
 import { ATTACHMENT_LIMITS, AttachmentError, extractAttachment } from "./attachments";
+import { computeMetrics } from "./metrics";
+import { z as zod } from "zod";
 import type { z } from "zod";
 
 type Ctx = { req: Request; rt: Runtime; jar: RequestCookieJar; url: URL; params: string[] };
@@ -82,7 +84,8 @@ const sessionInfo: Handler = async (ctx) => {
   const s = await ctx.rt.backend.getSession(ctx.jar);
   const signupMode = ctx.rt.config.signupMode;
   if (!s) return json({ user: null, backend: ctx.rt.backend.kind, signupMode });
-  return json({ user: s.user, profile: await s.store.getProfile(), backend: ctx.rt.backend.kind, signupMode });
+  const [profile, isAdmin] = await Promise.all([s.store.getProfile(), ctx.rt.backend.isAdmin(ctx.jar, s)]);
+  return json({ user: s.user, profile, backend: ctx.rt.backend.kind, signupMode, isAdmin });
 };
 
 // ---------------- profile & account
@@ -161,8 +164,13 @@ const getConversation: Handler = async (ctx) => {
   const s = await requireSession(ctx);
   const c = await s.store.getConversation(idParam(ctx));
   if (!c) return notFound();
-  const [messages, attachments] = await Promise.all([s.store.listMessages(c.id), s.store.listConversationAttachments(c.id)]);
-  return json({ ...c, messages, attachments: attachments.map(({ content, ...meta }) => (void content, meta)) });
+  const [messages, attachments, feedback] = await Promise.all([s.store.listMessages(c.id), s.store.listConversationAttachments(c.id), s.store.listFeedback(c.id)]);
+  return json({
+    ...c,
+    messages,
+    attachments: attachments.map(({ content, ...meta }) => (void content, meta)),
+    feedback: Object.fromEntries(feedback.map((f) => [f.messageId, f.rating])),
+  });
 };
 const patchConversation: Handler = async (ctx) => {
   const s = await requireSession(ctx);
@@ -244,6 +252,25 @@ const uploadAttachment: Handler = async (ctx) => {
 const deleteAttachment: Handler = async (ctx) => {
   const s = await requireSession(ctx);
   return (await s.store.deleteAttachment(idParam(ctx))) ? json({ ok: true }) : notFound();
+};
+
+// ---------------- feedback & admin metrics
+const feedbackSchema = zod.object({ rating: zod.union([zod.literal(1), zod.literal(-1), zod.null()]) }).strict();
+
+const setFeedback: Handler = async (ctx) => {
+  const s = await requireSession(ctx);
+  const { rating } = parse(feedbackSchema, await readJson(ctx.req));
+  return (await s.store.setFeedback(idParam(ctx), rating)) ? json({ ok: true, rating }) : notFound();
+};
+
+const adminMetrics: Handler = async (ctx) => {
+  const s = await requireSession(ctx);
+  const days = Math.min(Math.max(Number(ctx.url.searchParams.get("days")) || 14, 1), 90);
+  const now = new Date();
+  const since = new Date(Date.parse(now.toISOString().slice(0, 10)) - (days - 1) * 86_400_000);
+  const data = await ctx.rt.backend.adminMetricsData(ctx.jar, s, since);
+  if (!data) return errorJson(403, "forbidden");
+  return json(computeMetrics(data, { now, days }));
 };
 
 // ---------------- usage & models
@@ -362,6 +389,8 @@ const routes: Route[] = [
   ["DELETE", "memory/:id", deleteMemory],
   ["POST", "attachments", uploadAttachment],
   ["DELETE", "attachments/:id", deleteAttachment],
+  ["PUT", "messages/:id/feedback", setFeedback],
+  ["GET", "admin/metrics", adminMetrics],
   ["GET", "usage", usage],
   ["GET", "models", models],
 ];

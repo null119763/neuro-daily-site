@@ -8,6 +8,7 @@ export interface AppState {
   user: AuthUser;
   profile: Profile;
   backend: "local" | "supabase";
+  isAdmin: boolean;
   locale: Locale;
   t: (key: DictKey) => string;
   updateProfile: (patch: Partial<Profile>) => Promise<void>;
@@ -31,7 +32,7 @@ function applyLocale(locale: Locale) {
   document.cookie = `auden_locale=${locale}; path=/; max-age=31536000; samesite=lax`;
 }
 
-export function AppProvider(props: { user: AuthUser; profile: Profile; backend: "local" | "supabase"; children: ReactNode }) {
+export function AppProvider(props: { user: AuthUser; profile: Profile; backend: "local" | "supabase"; isAdmin?: boolean; children: ReactNode }) {
   const [profile, setProfile] = useState(props.profile);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -72,6 +73,7 @@ export function AppProvider(props: { user: AuthUser; profile: Profile; backend: 
       user: props.user,
       profile,
       backend: props.backend,
+      isAdmin: props.isAdmin ?? false,
       locale,
       t: (k) => translate(locale, k),
       updateProfile,
@@ -82,7 +84,7 @@ export function AppProvider(props: { user: AuthUser; profile: Profile; backend: 
       upsertConversation: (c) => setConversations((list) => [c, ...list.filter((x) => x.id !== c.id)]),
       removeConversation: (id) => setConversations((list) => list.filter((x) => x.id !== id)),
     }),
-    [props.user, props.backend, profile, locale, updateProfile, conversations, projects, refreshConversations, refreshProjects],
+    [props.user, props.backend, props.isAdmin, profile, locale, updateProfile, conversations, projects, refreshConversations, refreshProjects],
   );
 
   return <Ctx.Provider value={value}>{props.children}</Ctx.Provider>;

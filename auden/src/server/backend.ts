@@ -6,6 +6,7 @@ import { LocalGlobalUsage, LocalUserStore } from "@/persistence/local-store";
 import type { GlobalUsage, UserStore } from "@/persistence/store";
 import { SupabaseGlobalUsage, SupabaseUserStore } from "@/persistence/supabase-store";
 import { isEmailAllowed, type AppConfig } from "./config";
+import type { MetricsData } from "./metrics";
 
 export interface CookieOptions {
   httpOnly?: boolean;
@@ -46,6 +47,9 @@ export interface Backend {
   signIn(jar: CookieJar, input: { email: string; password: string }): Promise<AuthResult>;
   signOut(jar: CookieJar): Promise<void>;
   getSession(jar: CookieJar): Promise<Session | null>;
+  isAdmin(jar: CookieJar, session: Session): Promise<boolean>;
+  /** Aggregate-ready data without message content, or null if the caller is not an admin. */
+  adminMetricsData(jar: CookieJar, session: Session, since: Date): Promise<MetricsData | null>;
 }
 
 export const LOCAL_SESSION_COOKIE = "auden_session";
@@ -57,7 +61,7 @@ export class LocalBackend implements Backend {
   private readonly global: LocalGlobalUsage;
 
   constructor(
-    private readonly cfg: Pick<AppConfig, "localDataFile" | "signupMode" | "allowedEmails">,
+    private readonly cfg: Pick<AppConfig, "localDataFile" | "signupMode" | "allowedEmails"> & Partial<Pick<AppConfig, "adminEmails">>,
     db?: LocalDatabase,
     private readonly secureCookies = process.env.NODE_ENV === "production",
   ) {
@@ -103,6 +107,39 @@ export class LocalBackend implements Backend {
     const user = await this.auth.userFromToken(jar.get(LOCAL_SESSION_COOKIE));
     if (!user) return null;
     return { user, store: new LocalUserStore(this.db, user.id), global: this.global };
+  }
+
+  async isAdmin(_jar: CookieJar, session: Session): Promise<boolean> {
+    return (this.cfg.adminEmails ?? []).includes(session.user.email.toLowerCase());
+  }
+
+  async adminMetricsData(jar: CookieJar, session: Session, since: Date): Promise<MetricsData | null> {
+    if (!(await this.isAdmin(jar, session))) return null;
+    const d = await this.db.read();
+    const s = since.toISOString();
+    const msgModel = new Map(d.messages.map((m) => [m.id, m]));
+    return {
+      users: d.users.map((u) => ({ id: u.id, createdAt: u.createdAt })),
+      usage: d.usage
+        .filter((u) => u.createdAt >= s)
+        .map((u) => ({
+          userId: u.userId === "deleted" ? null : u.userId,
+          provider: u.provider,
+          model: u.model,
+          mode: u.mode ?? null,
+          status: u.status,
+          errorCode: u.errorCode ?? null,
+          ttftMs: u.ttftMs ?? null,
+          latencyMs: u.latencyMs ?? null,
+          inputTokens: u.inputTokens,
+          outputTokens: u.outputTokens,
+          cost: u.cost,
+          createdAt: u.createdAt,
+        })),
+      feedback: d.feedback
+        .filter((f) => f.createdAt >= s)
+        .map((f) => ({ rating: f.rating, provider: msgModel.get(f.messageId)?.provider ?? null, model: msgModel.get(f.messageId)?.model ?? null, createdAt: f.createdAt })),
+    };
   }
 }
 
@@ -166,5 +203,20 @@ export class SupabaseBackend implements Backend {
       store: new SupabaseUserStore(sb, data.user.id),
       global: new SupabaseGlobalUsage(sb),
     };
+  }
+
+  async isAdmin(jar: CookieJar): Promise<boolean> {
+    const { data, error } = await this.client(jar).rpc("is_admin");
+    return !error && data === true;
+  }
+
+  async adminMetricsData(jar: CookieJar, _session: Session, since: Date): Promise<MetricsData | null> {
+    // The database function refuses non-admins, so this cannot be bypassed from the client.
+    const { data, error } = await this.client(jar).rpc("admin_metrics_data", { since: since.toISOString() });
+    if (error) {
+      if (error.code === "42501") return null;
+      throw new Error(`Database error: ${error.message}`);
+    }
+    return data as MetricsData;
   }
 }

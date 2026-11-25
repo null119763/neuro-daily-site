@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowUp, BookmarkPlus, Check, Copy, Ellipsis, FileText, ImageIcon, LoaderCircle, Mic, Paperclip, RotateCcw, Square, X } from "lucide-react";
+import { ArrowUp, BookmarkPlus, Check, Copy, Ellipsis, FileText, ImageIcon, LoaderCircle, Mic, Paperclip, RotateCcw, Square, ThumbsDown, ThumbsUp, X } from "lucide-react";
 import type { Mode } from "@/core/types";
 import type { Attachment, Conversation, Memory, Message } from "@/domain/types";
 import { useApp } from "../app-context";
@@ -17,6 +17,7 @@ type UIMessage = Pick<Message, "id" | "role" | "content" | "provider" | "model" 
   errorCode?: string;
   proposal?: Memory | null;
   attachments?: Attachment[];
+  rating?: 1 | -1 | null;
 };
 
 const MODES: Mode[] = ["air", "core", "prime"];
@@ -74,12 +75,12 @@ export function ChatView({ conversationId, projectId, intro }: { conversationId:
   useEffect(() => {
     if (!conversationId) return;
     let cancelled = false;
-    api<Conversation & { messages: Message[]; attachments: Attachment[] }>(`conversations/${conversationId}`)
+    api<Conversation & { messages: Message[]; attachments: Attachment[]; feedback: Record<string, 1 | -1> }>(`conversations/${conversationId}`)
       .then((c) => {
         if (cancelled) return;
         setConversation(c);
         setMode(c.mode);
-        setMessages(c.messages.map((m) => ({ ...m, attachments: c.attachments.filter((a) => a.messageId === m.id) })));
+        setMessages(c.messages.map((m) => ({ ...m, attachments: c.attachments.filter((a) => a.messageId === m.id), rating: c.feedback[m.id] ?? null })));
       })
       .catch((e) => {
         if (!cancelled && e instanceof ApiError && e.status === 404) setNotFound(true);
@@ -258,6 +259,18 @@ export function ChatView({ conversationId, projectId, intro }: { conversationId:
     await runStream({ conversationId: conversation.id, regenerate: true, mode }, { replaced: messages.slice(i + 1) });
   }, [busy, conversation, messages, mode, runStream]);
 
+  async function rate(id: string, value: 1 | -1) {
+    const current = messages.find((m) => m.id === id)?.rating ?? null;
+    const next = current === value ? null : value;
+    setMessages((list) => list.map((m) => (m.id === id ? { ...m, rating: next } : m)));
+    try {
+      await api(`messages/${id}/feedback`, { method: "PUT", body: { rating: next } });
+    } catch (e) {
+      setMessages((list) => list.map((m) => (m.id === id ? { ...m, rating: current } : m)));
+      setBanner(errorText(locale, (e as ApiError).code));
+    }
+  }
+
   function stop() {
     abortRef.current?.abort();
   }
@@ -415,7 +428,7 @@ export function ChatView({ conversationId, projectId, intro }: { conversationId:
                 )}
               </div>
             ) : (
-              <AssistantMessage key={m.id} m={m} isLast={m.id === lastAi?.id} onRetry={!busy ? () => void regenerate() : undefined} />
+              <AssistantMessage key={m.id} m={m} isLast={m.id === lastAi?.id} onRetry={!busy ? () => void regenerate() : undefined} onRate={(v) => void rate(m.id, v)} />
             ),
           )}
           {banner && (
@@ -524,7 +537,7 @@ export function ChatView({ conversationId, projectId, intro }: { conversationId:
   );
 }
 
-function AssistantMessage({ m, isLast, onRetry }: { m: UIMessage; isLast: boolean; onRetry?: () => void }) {
+function AssistantMessage({ m, isLast, onRetry, onRate }: { m: UIMessage; isLast: boolean; onRetry?: () => void; onRate: (v: 1 | -1) => void }) {
   const { t, locale } = useApp();
   const [copied, setCopied] = useState(false);
   const label = modelLabel(m.provider, m.model);
@@ -559,6 +572,16 @@ function AssistantMessage({ m, isLast, onRetry }: { m: UIMessage; isLast: boolea
             >
               {copied ? <Check size={16} /> : <Copy size={16} />}
             </button>
+            {!m.id.startsWith("tmp") && (
+              <>
+                <button className={`icon-btn${m.rating === 1 ? " active" : ""}`} style={{ width: 32, height: 32 }} aria-label={t("chat.good")} title={t("chat.good")} aria-pressed={m.rating === 1} onClick={() => onRate(1)}>
+                  <ThumbsUp size={16} />
+                </button>
+                <button className={`icon-btn${m.rating === -1 ? " active" : ""}`} style={{ width: 32, height: 32 }} aria-label={t("chat.bad")} title={t("chat.bad")} aria-pressed={m.rating === -1} onClick={() => onRate(-1)}>
+                  <ThumbsDown size={16} />
+                </button>
+              </>
+            )}
             {isLast && onRetry && (
               <button className="icon-btn" style={{ width: 32, height: 32 }} aria-label={t("chat.regenerate")} title={t("chat.regenerate")} onClick={onRetry}>
                 <RotateCcw size={16} />

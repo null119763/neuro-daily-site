@@ -22,6 +22,8 @@ export interface AppConfig {
   /** Trust X-Forwarded-For from the hosting proxy for per-IP auth limits. */
   trustProxy: boolean;
   auth: { failedPerEmail: number; failedPerIp: number; signupsPerIpHour: number };
+  /** Local backend: who may see aggregate metrics. Supabase uses the public.admins table instead. */
+  adminEmails: string[];
 }
 
 export function isEmailAllowed(email: string, cfg: Pick<AppConfig, "signupMode" | "allowedEmails">): boolean {
@@ -83,6 +85,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       .map((x) => x.trim().toLowerCase())
       .filter(Boolean),
     trustProxy: env.AUDEN_TRUST_PROXY !== "false",
+    adminEmails: (env.AUDEN_ADMIN_EMAILS ?? "")
+      .split(",")
+      .map((x) => x.trim().toLowerCase())
+      .filter(Boolean),
     auth: {
       failedPerEmail: int("AUDEN_AUTH_FAILS_PER_EMAIL", 5, env),
       failedPerIp: int("AUDEN_AUTH_FAILS_PER_IP", 30, env),

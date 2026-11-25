@@ -5,6 +5,7 @@ import type {
   Conversation,
   Memory,
   MemorySource,
+  MessageFeedback,
   Message,
   MessageStatus,
   Profile,
@@ -88,6 +89,10 @@ export interface UserStore {
   /** Removes uploads never sent with a message and older than `before`. */
   deleteStaleUploads(before: Date): Promise<number>;
   countAttachments(since: Date): Promise<number>;
+
+  /** Rates an owned assistant message (1 / -1) or clears the rating (null). False if not found. */
+  setFeedback(messageId: string, rating: 1 | -1 | null): Promise<boolean>;
+  listFeedback(conversationId: string): Promise<MessageFeedback[]>;
 
   recordUsage(input: UsageInput): Promise<void>;
   countRequests(since: Date): Promise<number>;

@@ -330,6 +330,62 @@ describe("attachments", () => {
   });
 });
 
+describe("feedback and admin metrics", () => {
+  it("rates own assistant answers only and returns ratings with the conversation", async () => {
+    const r = await alice.chat({ message: "Вопрос" });
+    const convId = r.events[0].conversation.id;
+    const answerId = r.events.at(-1).message.id;
+    const questionId = r.events[0].userMessage.id;
+    expect((await alice.json("PUT", `messages/${answerId}/feedback`, { rating: 1 })).status).toBe(200);
+    expect((await alice.json("GET", `conversations/${convId}`)).data.feedback).toEqual({ [answerId]: 1 });
+    expect((await alice.json("PUT", `messages/${answerId}/feedback`, { rating: -1 })).status).toBe(200);
+    expect((await alice.json("GET", `conversations/${convId}`)).data.feedback).toEqual({ [answerId]: -1 });
+    expect((await alice.json("PUT", `messages/${answerId}/feedback`, { rating: null })).status).toBe(200);
+    expect((await alice.json("GET", `conversations/${convId}`)).data.feedback).toEqual({});
+
+    expect((await alice.json("PUT", `messages/${questionId}/feedback`, { rating: 1 })).status).toBe(404);
+    expect((await bob.json("PUT", `messages/${answerId}/feedback`, { rating: -1 })).status).toBe(404);
+    expect((await alice.json("PUT", `messages/${answerId}/feedback`, { rating: 5 })).status).toBe(400);
+  });
+
+  it("records timing and mode for every request", async () => {
+    await alice.chat({ message: "hi", mode: "air" });
+    await alice.chat({ message: "/mock-error timeout" });
+    const exp = await (await alice.call("GET", "account/export")).json();
+    const [ok, failed] = exp.usage;
+    expect(ok).toMatchObject({ status: "complete", mode: "air", errorCode: null });
+    expect(ok.ttftMs).toBeGreaterThanOrEqual(0);
+    expect(ok.latencyMs).toBeGreaterThanOrEqual(ok.ttftMs);
+    expect(failed).toMatchObject({ status: "error", errorCode: "timeout", ttftMs: null });
+  });
+
+  it("shows aggregate metrics to admins only, without content", async () => {
+    const adm = makeRuntime({ AUDEN_ADMIN_EMAILS: "boss@test.dev" });
+    const boss = new Client(adm.rt);
+    const user = new Client(adm.rt);
+    await boss.signUp("boss@test.dev");
+    await user.signUp("user@test.dev");
+    const r = await user.chat({ message: "секретный вопрос" });
+    await user.json("PUT", `messages/${r.events.at(-1).message.id}/feedback`, { rating: 1 });
+    await user.chat({ message: "/mock-error unavailable" });
+
+    expect((await user.json("GET", "admin/metrics")).status).toBe(403);
+    expect((await user.json("GET", "auth/session")).data.isAdmin).toBe(false);
+    expect((await boss.json("GET", "auth/session")).data.isAdmin).toBe(true);
+
+    const m = await boss.json("GET", "admin/metrics?days=7");
+    expect(m.status).toBe(200);
+    expect(m.data.period.days).toBe(7);
+    expect(m.data.totals).toMatchObject({ users: 2, newUsers: 2, activeUsers: 1, requests: 2, feedbackUp: 1, feedbackDown: 0 });
+    expect(m.data.totals.successRate).toBe(0.5);
+    expect(m.data.errors).toEqual([{ code: "unavailable", count: 1 }]);
+    expect(m.data.byModel[0]).toMatchObject({ provider: "mock", model: "mock-core", up: 1 });
+    const text = JSON.stringify(m.data);
+    expect(text).not.toContain("секретный");
+    expect(text).not.toContain("user@test.dev");
+  });
+});
+
 describe("quotas", () => {
   it("enforces per-minute limit server-side", async () => {
     const limited = makeRuntime({ AUDEN_USER_PER_MINUTE: "2" });

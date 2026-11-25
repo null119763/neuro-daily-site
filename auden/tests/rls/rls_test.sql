@@ -152,6 +152,57 @@ do $$ begin
 end $$;
 reset role;
 
+-- Feedback and admin metrics
+insert into auth.users (id, email) values
+  ('55555555-5555-5555-5555-555555555555', 'e@test.dev'),
+  ('66666666-6666-6666-6666-666666666666', 'admin@test.dev');
+insert into public.admins (user_id) values ('66666666-6666-6666-6666-666666666666');
+select pg_temp.as_user('55555555-5555-5555-5555-555555555555');
+insert into public.conversations (id, user_id, title) values ('eeeeeeee-0000-0000-0000-000000000001', auth.uid(), 'E chat');
+insert into public.messages (id, conversation_id, user_id, role, content, provider, model) values
+  ('eeeeeeee-0000-0000-0000-000000000002', 'eeeeeeee-0000-0000-0000-000000000001', auth.uid(), 'user', 'q', null, null),
+  ('eeeeeeee-0000-0000-0000-000000000003', 'eeeeeeee-0000-0000-0000-000000000001', auth.uid(), 'assistant', 'private answer', 'mock', 'mock-core');
+insert into public.message_feedback (message_id, user_id, rating) values ('eeeeeeee-0000-0000-0000-000000000003', auth.uid(), 1);
+insert into public.usage_events (user_id, provider, model, mode, ttft_ms, latency_ms) values (auth.uid(), 'mock', 'mock-core', 'core', 120, 900);
+do $$ begin
+  begin
+    insert into public.message_feedback (message_id, user_id, rating) values ('eeeeeeee-0000-0000-0000-000000000002', auth.uid(), 1);
+    raise exception 'rating a user message should fail';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    insert into public.message_feedback (message_id, user_id, rating) values ('eeeeeeee-0000-0000-0000-000000000003', auth.uid(), 5);
+    raise exception 'invalid rating should fail';
+  exception when check_violation or unique_violation then null;
+  end;
+  assert public.is_admin() = false, 'regular user is not admin';
+  begin
+    perform public.admin_metrics_data(now() - interval '1 day');
+    raise exception 'metrics should be admin only';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform 1 from public.admins;
+    raise exception 'admins table should be hidden';
+  exception when insufficient_privilege then null;
+  end;
+end $$;
+reset role;
+select pg_temp.as_user('66666666-6666-6666-6666-666666666666');
+do $$
+declare d jsonb;
+begin
+  assert public.is_admin(), 'admin recognised';
+  assert (select count(*) from public.message_feedback) = 0, 'admin cannot read feedback rows directly';
+  d := public.admin_metrics_data(now() - interval '1 day');
+  assert jsonb_array_length(d -> 'feedback') = 1, 'feedback aggregated';
+  assert (d -> 'feedback' -> 0 ->> 'model') = 'mock-core', 'feedback carries model';
+  assert exists (select 1 from jsonb_array_elements(d -> 'usage') e where (e ->> 'latencyMs')::int = 900), 'usage carries latency';
+  assert position('private answer' in d::text) = 0, 'no message content in metrics';
+  assert position('e@test.dev' in d::text) = 0, 'no emails in metrics';
+end $$;
+reset role;
+
 -- Sign-up modes are enforced by the database
 update public.app_config set value = 'allowlist' where key = 'signup_mode';
 insert into public.signup_allowlist (entry) values ('invited@test.dev'), ('@team.dev');
